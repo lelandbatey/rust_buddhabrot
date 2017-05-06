@@ -7,4 +7,5 @@ authors = ["Leland Batey <lelandbatey@gmail.com>"]
 argparse = "*"
 image = "*"
 rand = "0.3"
+time = "*"
 num = "0.1"

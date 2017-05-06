@@ -3,10 +3,12 @@
 //extern crate argparse;
 extern crate image;
 extern crate rand;
+extern crate time;
 extern crate num;
 
 use std::sync::mpsc::channel;
 use std::time::Duration;
+use std::str::FromStr;
 use std::cmp::max;
 use std::thread;
 
@@ -79,7 +81,7 @@ fn main() {
 
     let (mut centerx, mut centery) = (-0.74, 0.0);
     //let startzoom = 1.26;
-    let startzoom = 2.5;
+    let startzoom = 2.0;
 
     let mut zoomlevel = 1.0;
 
@@ -88,12 +90,9 @@ fn main() {
     let (starty, stopy) = (centery - (startzoom / (2.0 as f64).powf(zoomlevel)),
                            centery + (startzoom / (2.0 as f64).powf(zoomlevel)));
 
-    //let MAX_TRAJECTORIES = 12000000;
-    let MAX_TRAJECTORIES = 2400000000;
+    //let MAX_TRAJECTORIES: usize = 12000000;
+    let MAX_TRAJECTORIES: usize = 480000000;
     let MAX_ITERATIONS = 64;
-
-    let mut most_bright = 0;
-
 
     let mut children = vec![];
 
@@ -103,14 +102,17 @@ fn main() {
         // Spin up threads to calculate trajectories
         let child = thread::spawn(move || {
             println!("Thread {} started", c);
-            for traj in 0..(MAX_TRAJECTORIES / thread_count) as usize {
+            for traj in 0..(MAX_TRAJECTORIES / thread_count) {
                 let mut reststops: Vec<[u32; 2]> = Vec::new();
                 let mut escaped = false;
                 let mut z = Complex::new(0.0, 0.0);
-                let c = Complex::new((startx * 5.0) +
-                                     rand::random::<f64>() * ((stopx * 5.0) - (startx * 5.0)),
-                                     (starty * 5.0) +
-                                     rand::random::<f64>() * ((stopy * 5.0) - (starty * 5.0)));
+                let samplescale = 1.5;
+                let c = Complex::new((startx * samplescale) +
+                                     rand::random::<f64>() *
+                                     ((stopx * samplescale) - (startx * samplescale)),
+                                     (starty * samplescale) +
+                                     rand::random::<f64>() *
+                                     ((stopy * samplescale) - (starty * samplescale)));
                 for _ in 0..MAX_ITERATIONS {
                     if escaped {
                         break;
@@ -143,26 +145,22 @@ fn main() {
         children.push(child);
     }
 
-    //for child in children {
-    //child.join().unwrap();
-    //}
-    //drop(tx);
-
     let mut img = Img::new(imgx, imgy);
 
     let mut done = false;
     println!("Begun recieving reststops");
     let timeout = Duration::from_millis(250);
     for _ in 0..MAX_TRAJECTORIES {
-        //loop {
-        //println!("Recieving");
         match rx.recv_timeout(timeout) {
             Ok(reststops) => {
                 for p in reststops {
                     img.incr_px(p[0] as i64, p[1] as i64);
                 }
             }
-            Err(_) => break,
+            Err(_) => {
+                println!("Timed out!");
+                break;
+            }
         }
     }
     println!("Finished coming up with pixel values");
@@ -171,11 +169,16 @@ fn main() {
 
     for (x, y, pixel) in imgbuf.enumerate_pixels_mut() {
         let val = img.pixels[((img.height * y as i64) + x as i64) as usize];
-        *pixel = pixel.map(|v| ((val / img.maximum) * 255) as u8)
+        *pixel = pixel.map(|v| ((val as f64 / img.maximum as f64) * 255.0) as u8)
     }
 
     // Save the image as “fractal.png”
-    let ref mut fout = File::create(&Path::new("fractal.png")).unwrap();
+    let rightnow = time::strftime("%Y-%m-%d_%H:%M:%S", &time::now()).unwrap();
+    let ref mut fout = File::create(&Path::new((String::from_str("fractal").unwrap() +
+                                                rightnow.as_str() +
+                                                ".png")
+            .as_str()))
+        .unwrap();
     // We must indicate the image’s color type and what format to save as
     let _ = image::ImageLuma8(imgbuf).save(fout, image::PNG);
     //println!("Hello, world!");
