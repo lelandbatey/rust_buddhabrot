@@ -1,0 +1,10 @@
+[package]
+name = "buddhabrot"
+version = "0.1.0"
+authors = ["Leland Batey <lelandbatey@gmail.com>"]
+
+[dependencies]
+argparse = "*"
+image = "*"
+rand = "0.3"
+num = "0.1"
