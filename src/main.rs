@@ -1,6 +1,5 @@
 
-
-//extern crate argparse;
+extern crate argparse;
 extern crate image;
 extern crate rand;
 extern crate time;
@@ -18,6 +17,8 @@ use std::path::Path;
 
 use num::complex::Complex;
 use rand::Rng;
+
+use argparse::{ArgumentParser, Store};
 
 
 struct Img {
@@ -66,65 +67,74 @@ impl Img {
             }
         }
     }
+    pub fn pix_val(&mut self, x: i64, y: i64) -> i64 {
+        self.pixels[((self.height * y as i64) + x as i64) as usize]
+    }
+    pub fn scaled_pix_val(&mut self, x: i64, y: i64) -> u8 {
+        let val = self.pixels[((self.height * y as i64) + x as i64) as usize];
+        ((val as f64 / self.maximum as f64) * 255.0) as u8
+    }
 }
 
+#[derive(Copy, Clone)]
+struct BuddhaConf {
+    color: bool,
+    thread_count: usize,
+    max_iterations: i64,
+    width: i64,
+    height: i64,
+    samplescale: f64,
+    centerx: f64,
+    centery: f64,
+    zoomlevel: f64,
+    sample_multiplier: i64,
+}
 
-fn main() {
-    let thread_count = 3;
-    let max_iterations = 256u16;
+//fn renderBuddhabort(c: BuddhaConf) -> Result<Img, Error> {
+fn renderBuddhabort(c: BuddhaConf) -> Vec<Img> {
 
-    let imgx = 800;
-    let imgy = 800;
-
-    let scalex = 4.0 / imgx as f32;
-    let scaley = 4.0 / imgy as f32;
-
-    let (mut centerx, mut centery) = (-0.74, 0.0);
-    //let startzoom = 1.26;
     let startzoom = 2.0;
-
-    let mut zoomlevel = 1.0;
-
-    let (startx, stopx) = (centerx - (startzoom / (2.0 as f64).powf(zoomlevel)),
-                           centerx + (startzoom / (2.0 as f64).powf(zoomlevel)));
-    let (starty, stopy) = (centery - (startzoom / (2.0 as f64).powf(zoomlevel)),
-                           centery + (startzoom / (2.0 as f64).powf(zoomlevel)));
-
-    //let MAX_TRAJECTORIES: usize = 12000000;
-    let MAX_TRAJECTORIES: usize = 480000000;
-    let MAX_ITERATIONS = 64;
+    let (startx, stopx) = (c.centerx - (startzoom / (2.0 as f64).powf(c.zoomlevel)),
+                           c.centerx + (startzoom / (2.0 as f64).powf(c.zoomlevel)));
+    let (starty, stopy) = (c.centery - (startzoom / (2.0 as f64).powf(c.zoomlevel)),
+                           c.centery + (startzoom / (2.0 as f64).powf(c.zoomlevel)));
+    let MAX_TRAJECTORIES: usize = (c.width * c.height * c.sample_multiplier) as usize;
 
     let mut children = vec![];
 
     let (tx, rx) = channel();
-    for c in 0..thread_count {
+    //let (red_tx, red_rx) = channel();
+    //let (green_tx, green_rx) = channel();
+    //let (blue_tx, blue_rx) = channel();
+    for idx in 0..c.thread_count {
         let child_tx = tx.clone();
+        let tconf = c.clone();
         // Spin up threads to calculate trajectories
         let child = thread::spawn(move || {
-            println!("Thread {} started", c);
-            for traj in 0..(MAX_TRAJECTORIES / thread_count) {
+            println!("Thread {} started", idx);
+            let mut rng = rand::thread_rng();
+            for traj in 0..(MAX_TRAJECTORIES / tconf.thread_count) {
                 let mut reststops: Vec<[u32; 2]> = Vec::new();
                 let mut escaped = false;
                 let mut z = Complex::new(0.0, 0.0);
-                let samplescale = 1.5;
-                let c = Complex::new((startx * samplescale) +
-                                     rand::random::<f64>() *
-                                     ((stopx * samplescale) - (startx * samplescale)),
-                                     (starty * samplescale) +
-                                     rand::random::<f64>() *
-                                     ((stopy * samplescale) - (starty * samplescale)));
-                for _ in 0..MAX_ITERATIONS {
+                let cn = Complex::new((startx * tconf.samplescale) +
+                                      rng.gen::<f64>() *
+                                      ((stopx * tconf.samplescale) - (startx * tconf.samplescale)),
+                                      (starty * tconf.samplescale) +
+                                      rng.gen::<f64>() *
+                                      ((stopy * tconf.samplescale) - (starty * tconf.samplescale)));
+                for _ in 0..tconf.max_iterations {
                     if escaped {
                         break;
                     }
-                    z = z * z + c;
+                    z = z * z + cn;
 
-                    let length = stopx - startx;
                     // May want to swap x and y for upward facing buddha
-                    let x = (z.re - startx) / length * imgx as f64;
-                    let y = (z.im - starty) / (stopy - starty) * imgy as f64;
+                    let x = (z.re - startx) / (stopx - startx) * tconf.width as f64;
+                    let y = (z.im - starty) / (stopy - starty) * tconf.height as f64;
 
-                    if !(x < 0.0 || x >= (imgx as f64) || y < 0.0 || y >= (imgy as f64)) {
+                    if !(x < 0.0 || x >= (tconf.width as f64) || y < 0.0 ||
+                         y >= (tconf.height as f64)) {
                         reststops.push([x as u32, y as u32]);
                     }
                     if z.norm() > 2.0 {
@@ -132,22 +142,20 @@ fn main() {
                     }
                 }
                 if escaped {
-                    //child_tx.send(reststops.clone()).unwrap();
                     match child_tx.send(reststops.clone()) {
                         Ok(_) => (),
                         Err(_) => break,
                     }
                 }
             }
-            println!("Thread {} finished", c);
+            println!("Thread {} finished", idx);
             drop(child_tx);
         });
         children.push(child);
     }
 
-    let mut img = Img::new(imgx, imgy);
+    let mut img = Img::new(c.width, c.height);
 
-    let mut done = false;
     println!("Begun recieving reststops");
     let timeout = Duration::from_millis(250);
     for _ in 0..MAX_TRAJECTORIES {
@@ -164,12 +172,89 @@ fn main() {
         }
     }
     println!("Finished coming up with pixel values");
+
+    return vec![img];
+}
+
+
+fn main() {
+    let mut thread_count = 3;
+    let mut max_iterations = 256u16;
+
+    let mut imgx: i64 = 4096;
+    let mut imgy: i64 = 4096;
+
+    let mut samplescale = 5.0;
+
+    let (mut centerx, mut centery) = (-0.74, 0.0);
+    let mut zoomlevel = 1.0;
+
+    let mut sample_multiplier = 200;
+
+    {
+        let mut argparse = ArgumentParser::new();
+        argparse.set_description("Render a buddhabrot set as PNG");
+        argparse.refer(&mut thread_count)
+            .add_option(&["-t", "--threads"],
+                        Store,
+                        "Number of threads to use (default 4)");
+        argparse.refer(&mut imgx)
+            .add_option(&["--width"], Store, "Width of the output image");
+        argparse.refer(&mut imgy)
+            .add_option(&["--height"], Store, "Height of the output image");
+        argparse.refer(&mut max_iterations)
+            .add_option(&["--max_iters"],
+                        Store,
+                        "Maximum number of allowed iterations.");
+        argparse.refer(&mut centerx)
+            .add_option(&["-x"], Store, "The center X coordinate");
+        argparse.refer(&mut centery)
+            .add_option(&["-y"], Store, "The center Y coordinate");
+        argparse.refer(&mut zoomlevel)
+            .add_option(&["-z", "--zoom"], Store, "Amount of zoom in render");
+        argparse.refer(&mut sample_multiplier)
+            .add_option(&["-s", "--samples"],
+                        Store,
+                        "Number of samples per pixel (default 200)");
+        argparse.refer(&mut samplescale)
+            .add_option(&["--sample_scale"],
+                        Store,
+                        "Size of sampling area compared to viewing area (default 5)");
+        argparse.parse_args_or_exit();
+    }
+
+    let mut conf = BuddhaConf {
+        color: true,
+        thread_count: thread_count,
+        max_iterations: max_iterations as i64,
+        width: imgx,
+        height: imgy,
+        samplescale: samplescale,
+        centerx: centerx,
+        centery: centery,
+        zoomlevel: zoomlevel,
+        sample_multiplier: sample_multiplier,
+    };
+
+
+    let mut red_img = renderBuddhabort(conf);
+    conf.sample_multiplier = sample_multiplier / 10;
+    let mut green_img = renderBuddhabort(conf);
+    conf.sample_multiplier = sample_multiplier / 100;
+    let mut blue_img = renderBuddhabort(conf);
+
+    println!("Finished coming up with pixel values");
     // Create a new ImgBuf with width: imgx and height: imgy
-    let mut imgbuf = image::ImageBuffer::<image::Luma<u8>, Vec<u8>>::new(imgx as u32, imgy as u32);
+    let mut imgbuf = image::ImageBuffer::<image::Rgb<u8>, Vec<u8>>::new(imgx as u32, imgy as u32);
 
     for (x, y, pixel) in imgbuf.enumerate_pixels_mut() {
-        let val = img.pixels[((img.height * y as i64) + x as i64) as usize];
-        *pixel = pixel.map(|v| ((val as f64 / img.maximum as f64) * 255.0) as u8)
+        let r = red_img[0].scaled_pix_val(x as i64, y as i64);
+        let g = green_img[0].scaled_pix_val(x as i64, y as i64);
+        let b = blue_img[0].scaled_pix_val(x as i64, y as i64);
+
+        //*pixel = pixel.map(|v| (r, g, b));
+        *pixel = image::Rgb([r, g, b]);
+
     }
 
     // Save the image as “fractal.png”
@@ -180,6 +265,5 @@ fn main() {
             .as_str()))
         .unwrap();
     // We must indicate the image’s color type and what format to save as
-    let _ = image::ImageLuma8(imgbuf).save(fout, image::PNG);
-    //println!("Hello, world!");
+    let _ = image::ImageRgb8(imgbuf).save(fout, image::PNG);
 }
