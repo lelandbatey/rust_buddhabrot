@@ -2,7 +2,7 @@
 Rust Buddhabrot Renderer
 ========================
 
-A multi-threaded buddhabrot renderer written in Rust generating color PNG images.
+A multi-threaded [buddhabrot](https://en.wikipedia.org/wiki/Buddhabrot) renderer written in Rust generating color PNG images.
 
 
 Here's an example of building and running this code and the output it produces:
