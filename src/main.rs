@@ -5,20 +5,23 @@ extern crate rand;
 extern crate time;
 extern crate num;
 
+use std::collections::HashMap;
 use std::sync::mpsc::channel;
+use num::complex::Complex;
 use std::time::Duration;
 use std::str::FromStr;
-use std::cmp::max;
-use std::thread;
-
-use image::Pixel;
-use std::fs::File;
+use std::f64::consts;
 use std::path::Path;
-
-use num::complex::Complex;
+use std::io::Write;
+use std::cmp::max;
+use std::fs::File;
+use std::thread;
 use rand::Rng;
 
+use image::Pixel;
+
 use argparse::{ArgumentParser, Store};
+use std::io;
 
 
 struct Img {
@@ -27,6 +30,14 @@ struct Img {
     maximum: i64,
     minimum: i64,
     pixels: Vec<i64>,
+}
+
+fn fexp(x: f64, factor: f64) -> f64 {
+    1.0 - (consts::E.powf(-factor * x))
+}
+
+fn log(x: f64, factor: f64) -> f64 {
+    (factor * x + 1.0).ln()
 }
 
 impl Img {
@@ -70,9 +81,12 @@ impl Img {
     pub fn pix_val(&mut self, x: i64, y: i64) -> i64 {
         self.pixels[((self.height * y as i64) + x as i64) as usize]
     }
-    pub fn scaled_pix_val(&mut self, x: i64, y: i64) -> u8 {
+    pub fn scaled_pix_val(&self, x: i64, y: i64) -> u8 {
         let val = self.pixels[((self.height * y as i64) + x as i64) as usize];
-        ((val as f64 / self.maximum as f64) * 255.0) as u8
+        (fexp(val as f64, 0.001) / fexp(self.maximum as f64, 0.001) * 255.0) as u8
+        // These other scaling methods lead to somewhat less "nice looking" intensity scaling
+        //(log(val as f64, 0.01) / log(self.maximum as f64, 0.01) * 255.0) as u8
+        //((val as f64 / self.maximum as f64) * 255.0) as u8
     }
 }
 
@@ -81,16 +95,17 @@ struct BuddhaConf {
     color: bool,
     thread_count: usize,
     max_iterations: i64,
+    min_iterations: i64,
     width: i64,
     height: i64,
     samplescale: f64,
     centerx: f64,
     centery: f64,
     zoomlevel: f64,
-    sample_multiplier: i64,
+    sample_multiplier: f64,
 }
 
-//fn renderBuddhabort(c: BuddhaConf) -> Result<Img, Error> {
+
 fn renderBuddhabort(c: BuddhaConf) -> Vec<Img> {
 
     let startzoom = 2.0;
@@ -98,14 +113,11 @@ fn renderBuddhabort(c: BuddhaConf) -> Vec<Img> {
                            c.centerx + (startzoom / (2.0 as f64).powf(c.zoomlevel)));
     let (starty, stopy) = (c.centery - (startzoom / (2.0 as f64).powf(c.zoomlevel)),
                            c.centery + (startzoom / (2.0 as f64).powf(c.zoomlevel)));
-    let MAX_TRAJECTORIES: usize = (c.width * c.height * c.sample_multiplier) as usize;
+    let MAX_TRAJECTORIES: usize = (c.width as f64 * c.height as f64 * c.sample_multiplier) as usize;
 
     let mut children = vec![];
 
     let (tx, rx) = channel();
-    //let (red_tx, red_rx) = channel();
-    //let (green_tx, green_rx) = channel();
-    //let (blue_tx, blue_rx) = channel();
     for idx in 0..c.thread_count {
         let child_tx = tx.clone();
         let tconf = c.clone();
@@ -113,8 +125,12 @@ fn renderBuddhabort(c: BuddhaConf) -> Vec<Img> {
         let child = thread::spawn(move || {
             println!("Thread {} started", idx);
             let mut rng = rand::thread_rng();
-            for traj in 0..(MAX_TRAJECTORIES / tconf.thread_count) {
-                let mut reststops: Vec<[u32; 2]> = Vec::new();
+
+            let max_thread_traj = (MAX_TRAJECTORIES / tconf.thread_count);
+            let mut valid_traj = 0;
+
+            while valid_traj < max_thread_traj {
+                let mut reststops: (i64, Vec<[u32; 2]>) = (0, Vec::new());
                 let mut escaped = false;
                 let mut z = Complex::new(0.0, 0.0);
                 let cn = Complex::new((startx * tconf.samplescale) +
@@ -123,8 +139,10 @@ fn renderBuddhabort(c: BuddhaConf) -> Vec<Img> {
                                       (starty * tconf.samplescale) +
                                       rng.gen::<f64>() *
                                       ((stopy * tconf.samplescale) - (starty * tconf.samplescale)));
-                for _ in 0..tconf.max_iterations {
+                let mut final_iteration = 0;
+                for itercount in 0..tconf.max_iterations {
                     if escaped {
+                        final_iteration = itercount;
                         break;
                     }
                     z = z * z + cn;
@@ -135,16 +153,20 @@ fn renderBuddhabort(c: BuddhaConf) -> Vec<Img> {
 
                     if !(x < 0.0 || x >= (tconf.width as f64) || y < 0.0 ||
                          y >= (tconf.height as f64)) {
-                        reststops.push([x as u32, y as u32]);
+                        reststops.1.push([x as u32, y as u32]);
                     }
                     if z.norm() > 2.0 {
                         escaped = true;
                     }
                 }
                 if escaped {
-                    match child_tx.send(reststops.clone()) {
-                        Ok(_) => (),
-                        Err(_) => break,
+                    reststops.0 = final_iteration;
+                    if !(final_iteration < tconf.min_iterations) {
+                        match child_tx.send(reststops.clone()) {
+                            Ok(_) => (),
+                            Err(_) => break,
+                        }
+                        valid_traj += 1;
                     }
                 }
             }
@@ -154,32 +176,69 @@ fn renderBuddhabort(c: BuddhaConf) -> Vec<Img> {
         children.push(child);
     }
 
-    let mut img = Img::new(c.width, c.height);
+    // Our vector of images, each representing a color channel, in order [r, g, b].
+    let mut imgs: Vec<Img> =
+        vec![Img::new(c.width, c.height), Img::new(c.width, c.height), Img::new(c.width, c.height)];
+
+    let mut logfile = File::create("itercounts.txt").unwrap();
+    let mut iter_freq: HashMap<i64, i64> = HashMap::new();
 
     println!("Begun recieving reststops");
-    let timeout = Duration::from_millis(250);
-    for _ in 0..MAX_TRAJECTORIES {
+    let timeout = Duration::from_millis(250 + (100 * c.min_iterations) as u64);
+    for traj in 0..MAX_TRAJECTORIES {
         match rx.recv_timeout(timeout) {
             Ok(reststops) => {
-                for p in reststops {
-                    img.incr_px(p[0] as i64, p[1] as i64);
+                if (traj % (MAX_TRAJECTORIES / 100)) == 0 {
+                    print!("{}%\r",
+                           ((traj as f64 / MAX_TRAJECTORIES as f64) * 100.0) as u32);
+                    io::stdout().flush().unwrap();
+                }
+                let final_iteration = reststops.0;
+                let freq = iter_freq.entry(final_iteration).or_insert(0);
+                *freq += 1;
+                for p in reststops.1 {
+                    let iter_span: f64 = (c.max_iterations - c.min_iterations) as f64;
+                    let min_iters: f64 = c.min_iterations as f64;
+
+                    // If we've set a sufficiently hight minimum iteration number, then the
+                    // distribution of discovered orbits will be much more uniform, so make the
+                    // color distribution uniform. Otherwise, have it be inverse exponential to
+                    // compensate for the large number of small orbits.
+                    let red_factor = if c.min_iterations > 100 { 0.40 } else { 0.10 };
+                    let green_factor = if c.min_iterations > 100 { 0.10 } else { 0.01 };
+
+                    let red_min = ((iter_span * red_factor) + min_iters) as i64;
+                    let green_min = ((iter_span * green_factor) + min_iters) as i64;
+                    let blue_max = green_min;
+                    if final_iteration > red_min {
+                        imgs[0].incr_px(p[0] as i64, p[1] as i64);
+                    } else if final_iteration > green_min {
+                        imgs[1].incr_px(p[0] as i64, p[1] as i64);
+                    } else if final_iteration < blue_max {
+                        imgs[2].incr_px(p[0] as i64, p[1] as i64);
+                    }
                 }
             }
             Err(_) => {
-                println!("Timed out!");
+                println!("\n\nTimed out!");
                 break;
             }
         }
     }
+    for (key, val) in iter_freq.iter() {
+        write!(logfile, "{} {}\n", key, val).unwrap();
+    }
+
     println!("Finished coming up with pixel values");
 
-    return vec![img];
+    return imgs;
 }
 
 
 fn main() {
     let mut thread_count = 3;
-    let mut max_iterations = 256u16;
+    let mut max_iterations: i64 = 1024;
+    let mut min_iterations: i64 = 0;
 
     let mut imgx: i64 = 4096;
     let mut imgy: i64 = 4096;
@@ -189,7 +248,7 @@ fn main() {
     let (mut centerx, mut centery) = (-0.74, 0.0);
     let mut zoomlevel = 1.0;
 
-    let mut sample_multiplier = 200;
+    let mut sample_multiplier: f64 = 200.0;
 
     {
         let mut argparse = ArgumentParser::new();
@@ -206,6 +265,10 @@ fn main() {
             .add_option(&["--max_iters"],
                         Store,
                         "Maximum number of allowed iterations.");
+        argparse.refer(&mut min_iterations)
+            .add_option(&["--min_iters"],
+                        Store,
+                        "Minimum required number of iterations.");
         argparse.refer(&mut centerx)
             .add_option(&["-x"], Store, "The center X coordinate");
         argparse.refer(&mut centery)
@@ -227,6 +290,7 @@ fn main() {
         color: true,
         thread_count: thread_count,
         max_iterations: max_iterations as i64,
+        min_iterations: min_iterations,
         width: imgx,
         height: imgy,
         samplescale: samplescale,
@@ -237,24 +301,18 @@ fn main() {
     };
 
 
-    let mut red_img = renderBuddhabort(conf);
-    conf.sample_multiplier = sample_multiplier / 10;
-    let mut green_img = renderBuddhabort(conf);
-    conf.sample_multiplier = sample_multiplier / 100;
-    let mut blue_img = renderBuddhabort(conf);
+    let imgs: Vec<Img> = renderBuddhabort(conf);
 
     println!("Finished coming up with pixel values");
     // Create a new ImgBuf with width: imgx and height: imgy
     let mut imgbuf = image::ImageBuffer::<image::Rgb<u8>, Vec<u8>>::new(imgx as u32, imgy as u32);
 
     for (x, y, pixel) in imgbuf.enumerate_pixels_mut() {
-        let r = red_img[0].scaled_pix_val(x as i64, y as i64);
-        let g = green_img[0].scaled_pix_val(x as i64, y as i64);
-        let b = blue_img[0].scaled_pix_val(x as i64, y as i64);
+        let r = imgs[0].scaled_pix_val(x as i64, y as i64);
+        let g = imgs[1].scaled_pix_val(x as i64, y as i64);
+        let b = imgs[2].scaled_pix_val(x as i64, y as i64);
 
-        //*pixel = pixel.map(|v| (r, g, b));
         *pixel = image::Rgb([r, g, b]);
-
     }
 
     // Save the image as “fractal.png”
