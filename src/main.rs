@@ -90,9 +90,28 @@ impl Img {
     }
 }
 
+// write_ppm writes a PPM formated image from a vector of Img structs
+fn write_ppm(imgs: Vec<Img>, fname: String) {
+    let mut ppm = File::create(fname.as_str()).unwrap();
+
+    write!(ppm, "P3\n# Created by leland batey RustPPM\n").unwrap();
+    write!(ppm, "{} {}\n", imgs[0].width, imgs[0].height).unwrap();
+    write!(ppm,
+           "{}\n",
+           max(imgs[0].maximum, max(imgs[1].maximum, imgs[2].maximum)))
+        .unwrap();
+    for pidx in 0..imgs[0].pixels.len() {
+        write!(ppm,
+               "{} {} {}\n",
+               imgs[0].pixels[pidx],
+               imgs[1].pixels[pidx],
+               imgs[2].pixels[pidx])
+            .unwrap();
+    }
+}
+
 #[derive(Copy, Clone)]
 struct BuddhaConf {
-    color: bool,
     thread_count: usize,
     max_iterations: i64,
     min_iterations: i64,
@@ -106,7 +125,7 @@ struct BuddhaConf {
 }
 
 
-fn renderBuddhabort(c: BuddhaConf) -> Vec<Img> {
+fn render_buddhabort(c: BuddhaConf) -> Vec<Img> {
 
     let startzoom = 2.0;
     let (startx, stopx) = (c.centerx - (startzoom / (2.0 as f64).powf(c.zoomlevel)),
@@ -188,7 +207,7 @@ fn renderBuddhabort(c: BuddhaConf) -> Vec<Img> {
     for traj in 0..MAX_TRAJECTORIES {
         match rx.recv_timeout(timeout) {
             Ok(reststops) => {
-                if (traj % (MAX_TRAJECTORIES / 100)) == 0 {
+                if (traj % max((MAX_TRAJECTORIES / 100), 1)) == 0 {
                     print!("{}%\r",
                            ((traj as f64 / MAX_TRAJECTORIES as f64) * 100.0) as u32);
                     io::stdout().flush().unwrap();
@@ -286,8 +305,7 @@ fn main() {
         argparse.parse_args_or_exit();
     }
 
-    let mut conf = BuddhaConf {
-        color: true,
+    let conf = BuddhaConf {
         thread_count: thread_count,
         max_iterations: max_iterations as i64,
         min_iterations: min_iterations,
@@ -301,7 +319,7 @@ fn main() {
     };
 
 
-    let imgs: Vec<Img> = renderBuddhabort(conf);
+    let imgs: Vec<Img> = render_buddhabort(conf);
 
     println!("Finished coming up with pixel values");
     // Create a new ImgBuf with width: imgx and height: imgy
@@ -315,13 +333,15 @@ fn main() {
         *pixel = image::Rgb([r, g, b]);
     }
 
+    let rightnow = time::strftime("fractal%Y-%m-%d_%H:%M:%S", &time::now()).unwrap();
+    println!("Completed at {}", rightnow);
+
+    // Save as a plain ppm
+    write_ppm(imgs, rightnow.clone() + ".ppm");
+
     // Save the image as “fractal.png”
-    let rightnow = time::strftime("%Y-%m-%d_%H:%M:%S", &time::now()).unwrap();
-    let ref mut fout = File::create(&Path::new((String::from_str("fractal").unwrap() +
-                                                rightnow.as_str() +
-                                                ".png")
-            .as_str()))
-        .unwrap();
+    let pngname = rightnow + ".png";
+    let ref mut fout = File::create(&Path::new(pngname.as_str())).unwrap();
     // We must indicate the image’s color type and what format to save as
     let _ = image::ImageRgb8(imgbuf).save(fout, image::PNG);
 }
