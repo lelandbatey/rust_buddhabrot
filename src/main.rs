@@ -151,6 +151,7 @@ fn render_buddhabort(c: BuddhaConf) -> Vec<Img> {
 
     let mut children = vec![];
 
+    let max_thread_traj = (MAX_TRAJECTORIES / c.thread_count);
     let (tx, rx) = channel();
     for idx in 0..c.thread_count {
         let child_tx = tx.clone();
@@ -160,7 +161,6 @@ fn render_buddhabort(c: BuddhaConf) -> Vec<Img> {
             println!("Thread {} started", idx);
             let mut rng = rand::thread_rng();
 
-            let max_thread_traj = (MAX_TRAJECTORIES / tconf.thread_count);
             let mut valid_traj = 0;
 
             while valid_traj < max_thread_traj {
@@ -222,7 +222,7 @@ fn render_buddhabort(c: BuddhaConf) -> Vec<Img> {
 
     println!("Begun recieving reststops");
     let timeout = Duration::from_millis(250 + (100 * c.min_iterations) as u64);
-    for traj in 0..MAX_TRAJECTORIES {
+    for traj in 0..(max_thread_traj * c.thread_count) {
         match rx.recv_timeout(timeout) {
             Ok(reststops) => {
                 if (traj % max((MAX_TRAJECTORIES / 100), 1)) == 0 {
@@ -257,7 +257,7 @@ fn render_buddhabort(c: BuddhaConf) -> Vec<Img> {
                 }
             }
             Err(_) => {
-                println!("\n\nTimed out!");
+                println!("\n\nTimed out!\n\n");
                 break;
             }
         }
