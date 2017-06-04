@@ -124,6 +124,21 @@ struct BuddhaConf {
     sample_multiplier: f64,
 }
 
+// tells us if a point in the complex plane will loop forever by telling us if it's within the main
+// cardiod or within a second-order bulb.
+fn will_loop_forever(z: Complex<f64>) -> bool {
+    let x = z.re;
+    let y = z.im;
+    let p: f64 = ((x - 0.25).powi(2) + y.powi(2)).sqrt();
+    if x < (p - (2.0 * p.powi(2)) + 0.25) {
+        return true;
+    }
+    if ((x + 1.0).powi(2) + y.powi(2)) < 0.0625 {
+        return true;
+    }
+    return false;
+}
+
 
 fn render_buddhabort(c: BuddhaConf) -> Vec<Img> {
 
@@ -158,6 +173,9 @@ fn render_buddhabort(c: BuddhaConf) -> Vec<Img> {
                                       (starty * tconf.samplescale) +
                                       rng.gen::<f64>() *
                                       ((stopy * tconf.samplescale) - (starty * tconf.samplescale)));
+                if will_loop_forever(cn) {
+                    continue;
+                }
                 let mut final_iteration = 0;
                 for itercount in 0..tconf.max_iterations {
                     if escaped {
