@@ -99,15 +99,28 @@ fn write_ppm(imgs: Vec<Img>, fname: String) {
     write!(ppm,
            "{}\n",
            max(imgs[0].maximum, max(imgs[1].maximum, imgs[2].maximum)))
-        .unwrap();
+            .unwrap();
     for pidx in 0..imgs[0].pixels.len() {
         write!(ppm,
                "{} {} {}\n",
                imgs[0].pixels[pidx],
                imgs[1].pixels[pidx],
                imgs[2].pixels[pidx])
-            .unwrap();
+                .unwrap();
     }
+}
+
+struct Waypoint {
+    img_x: i32,
+    img_y: i32,
+    point: Complex<f64>,
+}
+
+struct Trajectory {
+    init_c: Complex<f64>,
+    waypoints: Vec<Waypoint>,
+    /// Length is the number of valid waypoints within the
+    length: i64,
 }
 
 #[derive(Copy, Clone)]
@@ -164,7 +177,6 @@ fn render_buddhabort(c: BuddhaConf) -> Vec<Img> {
             let mut valid_traj = 0;
 
             while valid_traj < max_thread_traj {
-                let mut reststops: (i64, Vec<[u32; 2]>) = (0, Vec::new());
                 let mut escaped = false;
                 let mut z = Complex::new(0.0, 0.0);
                 let cn = Complex::new((startx * tconf.samplescale) +
@@ -173,12 +185,18 @@ fn render_buddhabort(c: BuddhaConf) -> Vec<Img> {
                                       (starty * tconf.samplescale) +
                                       rng.gen::<f64>() *
                                       ((stopy * tconf.samplescale) - (starty * tconf.samplescale)));
+                let mut trajectory: Trajectory = Trajectory {
+                    init_c: cn,
+                    waypoints: Vec::new(),
+                    length: 0,
+                };
                 if will_loop_forever(cn) {
                     continue;
                 }
                 let mut final_iteration = 0;
                 for itercount in 0..tconf.max_iterations {
                     if escaped {
+                        trajectory.length = itercount;
                         final_iteration = itercount;
                         break;
                     }
@@ -190,16 +208,20 @@ fn render_buddhabort(c: BuddhaConf) -> Vec<Img> {
 
                     if !(x < 0.0 || x >= (tconf.width as f64) || y < 0.0 ||
                          y >= (tconf.height as f64)) {
-                        reststops.1.push([x as u32, y as u32]);
+                        let waypoint = Waypoint {
+                            img_x: x as i32,
+                            img_y: y as i32,
+                            point: z.clone(),
+                        };
+                        trajectory.waypoints.push(waypoint);
                     }
                     if z.norm() > 2.0 {
                         escaped = true;
                     }
                 }
                 if escaped {
-                    reststops.0 = final_iteration;
-                    if !(final_iteration < tconf.min_iterations) {
-                        match child_tx.send(reststops.clone()) {
+                    if !(trajectory.length < tconf.min_iterations) {
+                        match child_tx.send(trajectory) {
                             Ok(_) => (),
                             Err(_) => break,
                         }
@@ -214,32 +236,40 @@ fn render_buddhabort(c: BuddhaConf) -> Vec<Img> {
     }
 
     // Our vector of images, each representing a color channel, in order [r, g, b].
-    let mut imgs: Vec<Img> =
-        vec![Img::new(c.width, c.height), Img::new(c.width, c.height), Img::new(c.width, c.height)];
+    let mut imgs: Vec<Img> = vec![Img::new(c.width, c.height),
+                                  Img::new(c.width, c.height),
+                                  Img::new(c.width, c.height)];
 
     let mut logfile = File::create("itercounts.txt").unwrap();
     let mut iter_freq: HashMap<i64, i64> = HashMap::new();
 
-    println!("Begun recieving reststops");
+    println!("Begun recieving trajectories");
+
+    // If the program is failing to find *anything* for long enough, we want it to time out and
+    // just print what we've got. The timeout is thus based on a bare minimum, 1/4 of a second,
+    // plus 100 * the minimum number of iterations. It's a pretty usable heuristic.
     let timeout = Duration::from_millis(250 + (100 * c.min_iterations) as u64);
+
+    // Receive each trajectory found by the workers, using the waypoints of that trajectory to
+    // increment brightness values of the output images.
     for traj in 0..(max_thread_traj * c.thread_count) {
         match rx.recv_timeout(timeout) {
-            Ok(reststops) => {
+            Ok(trajectory) => {
                 if (traj % max((MAX_TRAJECTORIES / 100), 1)) == 0 {
                     print!("{}%\r",
                            ((traj as f64 / MAX_TRAJECTORIES as f64) * 100.0) as u32);
                     io::stdout().flush().unwrap();
                 }
-                let final_iteration = reststops.0;
+                let final_iteration = trajectory.length;
                 let freq = iter_freq.entry(final_iteration).or_insert(0);
                 *freq += 1;
-                for p in reststops.1 {
+                for p in trajectory.waypoints {
                     let iter_span: f64 = (c.max_iterations - c.min_iterations) as f64;
                     let min_iters: f64 = c.min_iterations as f64;
 
-                    // If we've set a sufficiently hight minimum iteration number, then the
+                    // If we've set a sufficiently height minimum iteration number, then the
                     // distribution of discovered orbits will be much more uniform, so make the
-                    // color distribution uniform. Otherwise, have it be inverse exponential to
+                    // color distribution uniform. Otherwise, have it be inverse log base 10 to
                     // compensate for the large number of small orbits.
                     let red_factor = if c.min_iterations > 100 { 0.40 } else { 0.10 };
                     let green_factor = if c.min_iterations > 100 { 0.10 } else { 0.01 };
@@ -248,11 +278,11 @@ fn render_buddhabort(c: BuddhaConf) -> Vec<Img> {
                     let green_min = ((iter_span * green_factor) + min_iters) as i64;
                     let blue_max = green_min;
                     if final_iteration > red_min {
-                        imgs[0].incr_px(p[0] as i64, p[1] as i64);
+                        imgs[0].incr_px(p.img_x as i64, p.img_y as i64);
                     } else if final_iteration > green_min {
-                        imgs[1].incr_px(p[0] as i64, p[1] as i64);
+                        imgs[1].incr_px(p.img_x as i64, p.img_y as i64);
                     } else if final_iteration < blue_max {
-                        imgs[2].incr_px(p[0] as i64, p[1] as i64);
+                        imgs[2].incr_px(p.img_x as i64, p.img_y as i64);
                     }
                 }
             }
@@ -290,33 +320,43 @@ fn main() {
     {
         let mut argparse = ArgumentParser::new();
         argparse.set_description("Render a buddhabrot set as PNG");
-        argparse.refer(&mut thread_count)
+        argparse
+            .refer(&mut thread_count)
             .add_option(&["-t", "--threads"],
                         Store,
                         "Number of threads to use (default 4)");
-        argparse.refer(&mut imgx)
+        argparse
+            .refer(&mut imgx)
             .add_option(&["--width"], Store, "Width of the output image");
-        argparse.refer(&mut imgy)
+        argparse
+            .refer(&mut imgy)
             .add_option(&["--height"], Store, "Height of the output image");
-        argparse.refer(&mut max_iterations)
+        argparse
+            .refer(&mut max_iterations)
             .add_option(&["--max_iters"],
                         Store,
                         "Maximum number of allowed iterations.");
-        argparse.refer(&mut min_iterations)
+        argparse
+            .refer(&mut min_iterations)
             .add_option(&["--min_iters"],
                         Store,
                         "Minimum required number of iterations.");
-        argparse.refer(&mut centerx)
+        argparse
+            .refer(&mut centerx)
             .add_option(&["-x"], Store, "The center X coordinate");
-        argparse.refer(&mut centery)
+        argparse
+            .refer(&mut centery)
             .add_option(&["-y"], Store, "The center Y coordinate");
-        argparse.refer(&mut zoomlevel)
+        argparse
+            .refer(&mut zoomlevel)
             .add_option(&["-z", "--zoom"], Store, "Amount of zoom in render");
-        argparse.refer(&mut sample_multiplier)
+        argparse
+            .refer(&mut sample_multiplier)
             .add_option(&["-s", "--samples"],
                         Store,
                         "Number of samples per pixel (default 200)");
-        argparse.refer(&mut samplescale)
+        argparse
+            .refer(&mut samplescale)
             .add_option(&["--sample_scale"],
                         Store,
                         "Size of sampling area compared to viewing area (default 5)");
