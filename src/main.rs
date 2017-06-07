@@ -1,6 +1,7 @@
 
 extern crate argparse;
 extern crate image;
+extern crate regex;
 extern crate rand;
 extern crate time;
 extern crate num;
@@ -11,16 +12,19 @@ use num::complex::Complex;
 use std::time::Duration;
 use std::str::FromStr;
 use std::f64::consts;
+use std::ops::Deref;
 use std::path::Path;
 use std::io::Write;
 use std::cmp::max;
 use std::fs::File;
+use std::io::Read;
 use std::thread;
 use rand::Rng;
 
 use image::Pixel;
 
 use argparse::{ArgumentParser, Store};
+use regex::Regex;
 use std::io;
 
 
@@ -81,9 +85,21 @@ impl Img {
     pub fn pix_val(&mut self, x: i64, y: i64) -> i64 {
         self.pixels[((self.height * y as i64) + x as i64) as usize]
     }
+    /// Returns the pixel specified scaled to a u8 by passing the raw value of the pixel and the
+    /// maximum pixel value within the image to delegate. `delegate` must return as floating point
+    /// value between 0.0 and 1.0, inclusive.
+    pub fn scaled_pix_delegate<F>(&self, x: i64, y: i64, delegate: F) -> u8
+        where F: Fn(f64, f64) -> f64
+    {
+        let val = self.pixels[((self.height * y as i64) + x as i64) as usize] as f64;
+        (delegate(val, self.maximum as f64) * 255.0) as u8
+    }
     pub fn scaled_pix_val(&self, x: i64, y: i64) -> u8 {
-        let val = self.pixels[((self.height * y as i64) + x as i64) as usize];
-        (fexp(val as f64, 0.001) / fexp(self.maximum as f64, 0.001) * 255.0) as u8
+        self.scaled_pix_delegate(x,
+                                 y,
+                                 |val, mx| (fexp(val as f64, 0.001) / fexp(mx as f64, 0.001)))
+
+        //(fexp(val as f64, 0.001) / fexp(self.maximum as f64, 0.001) * 255.0) as u8
         // These other scaling methods lead to somewhat less "nice looking" intensity scaling
         //(log(val as f64, 0.01) / log(self.maximum as f64, 0.01) * 255.0) as u8
         //((val as f64 / self.maximum as f64) * 255.0) as u8
@@ -108,6 +124,92 @@ fn write_ppm(imgs: Vec<Img>, fname: String) {
                imgs[2].pixels[pidx])
                 .unwrap();
     }
+}
+
+/// read_ppm reads a plain ppm file into a triplet of Img structs.
+fn read_ppm(fname: String) -> Vec<Img> {
+    let mut f = File::open(fname).unwrap();
+    let mut contents = String::new();
+    f.read_to_string(&mut contents).unwrap();
+    let re = Regex::new(r"#.*").unwrap();
+    let nocomments = re.replace_all(contents.as_str(), "");
+    let lines = nocomments.split('\n').collect::<Vec<&str>>();
+    // Simple state machine for parsing PPM
+    enum State {
+        awaitMagicNum,
+        awaitWidth,
+        awaitHeight,
+        awaitMaxval,
+        awaitRed,
+        awaitGreen,
+        awaitBlue,
+    }
+    // Our vector of images, each representing a color channel, in order [r, g, b].
+    let mut imgs: Vec<Img> = vec![];
+    let mut cur: State = State::awaitMagicNum;
+    let mut height: i64 = 0;
+    let mut width: i64 = 0;
+
+    let mut x = 0;
+    let mut y = 0;
+    for line in lines {
+        if line == "" {
+            continue;
+        }
+        let tokens = line.split(char::is_whitespace).collect::<Vec<&str>>();
+        for token in tokens {
+            if token == "" {
+                continue;
+            }
+            match cur {
+                State::awaitMagicNum => {
+                    if token == "P3" {
+                        cur = State::awaitWidth;
+                    }
+                }
+                State::awaitWidth => {
+                    width = token.parse().unwrap();
+                    cur = State::awaitHeight;
+                }
+                State::awaitHeight => {
+                    height = token.parse().unwrap();
+                    cur = State::awaitMaxval;
+                }
+                State::awaitMaxval => {
+                    // We actually ignore the maxval and calculate that on a per-channel level
+                    // automatically since each channel of RGB is represented as its own Img
+                    // structure.
+                    cur = State::awaitRed;
+                    // But, let's take the time now to initialize our images
+                    imgs.push(Img::new(width, height));
+                    imgs.push(Img::new(width, height));
+                    imgs.push(Img::new(width, height));
+
+                }
+                State::awaitRed => {
+                    imgs[0].set_px(x, y, token.parse().unwrap());
+                    cur = State::awaitGreen;
+                }
+                State::awaitGreen => {
+                    imgs[1].set_px(x, y, token.parse().unwrap());
+                    cur = State::awaitBlue;
+                }
+                State::awaitBlue => {
+                    imgs[2].set_px(x, y, token.parse().unwrap());
+                    cur = State::awaitRed;
+                    x += 1;
+                }
+            }
+            if x == width {
+                y += 1;
+                x = 0;
+            }
+        }
+    }
+    //println!("{:?}", nocomments.split('\n').collect::<Vec<&str>>());
+    //println!("{:?}",
+    //nocomments.split(char::is_whitespace).collect::<Vec<&str>>());
+    return imgs;
 }
 
 struct Waypoint {
@@ -154,7 +256,6 @@ fn will_loop_forever(z: Complex<f64>) -> bool {
 
 
 fn render_buddhabort(c: BuddhaConf) -> Vec<Img> {
-
     let startzoom = 2.0;
     let (startx, stopx) = (c.centerx - (startzoom / (2.0 as f64).powf(c.zoomlevel)),
                            c.centerx + (startzoom / (2.0 as f64).powf(c.zoomlevel)));
@@ -303,6 +404,32 @@ fn render_buddhabort(c: BuddhaConf) -> Vec<Img> {
 
 
 fn main() {
+    let ppmname = "fractal2017-05-20_09:52:20.ppm".to_owned();
+    let imgs = read_ppm(ppmname.clone());
+    println!("{}", imgs.len());
+    println!("{}x{}", imgs[1].width, imgs[0].height);
+    let mut scaling_funcs: Vec<(&str, Box<Fn(f64, f64) -> f64>)> = Vec::new();
+    scaling_funcs
+        .push(("fexp", Box::new(|val, mx| (fexp(val as f64, 0.001) / fexp(mx as f64, 0.001)))));
+
+    scaling_funcs.push(("log", Box::new(|val, mx| log(val as f64, 0.01) / log(mx as f64, 0.01))));
+
+    for func in scaling_funcs {
+        let mut imgbuf = image::ImageBuffer::<image::Rgb<u8>, Vec<u8>>::new(imgs[0].width as u32,
+                                                                            imgs[0].height as u32);
+        for (x, y, pixel) in imgbuf.enumerate_pixels_mut() {
+            let r = imgs[0].scaled_pix_delegate(x as i64, y as i64, func.1.deref());
+            let g = imgs[1].scaled_pix_delegate(x as i64, y as i64, func.1.deref());
+            let b = imgs[2].scaled_pix_delegate(x as i64, y as i64, func.1.deref());
+
+            *pixel = image::Rgb([r, g, b]);
+        }
+        let pngname = ppmname.clone() + func.0 + ".png";
+        let ref mut fout = File::create(&Path::new(pngname.as_str())).unwrap();
+        let _ = image::ImageRgb8(imgbuf).save(fout, image::PNG);
+    }
+    return;
+
     let mut thread_count = 3;
     let mut max_iterations: i64 = 1024;
     let mut min_iterations: i64 = 0;

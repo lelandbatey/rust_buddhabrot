@@ -5,6 +5,7 @@ authors = ["Leland Batey <lelandbatey@gmail.com>"]
 
 [dependencies]
 argparse = "*"
+regex = "0.2"
 image = "*"
 rand = "0.3"
 time = "*"
