@@ -291,6 +291,7 @@ fn render_buddhabort(c: BuddhaConf) -> Vec<Img> {
                 if will_loop_forever(cn) {
                     continue;
                 }
+                let mut periods = HashMap::new();
                 for itercount in 0..tconf.max_iterations {
                     trajectory.length = itercount;
                     if escaped {
@@ -313,6 +314,17 @@ fn render_buddhabort(c: BuddhaConf) -> Vec<Img> {
                     }
                     if z.norm() > 2.0 {
                         escaped = true;
+                    }
+                    // Check if we've encountered this point before (useful for avoiding cyclical
+                    // but never ending z's). This bit of math is a fancy way of checking if
+                    // itercount is a power of 2
+                    if itercount & (itercount - 1) == 0 {
+                        let k = format!("{:?}", z);
+                        if periods.contains_key(&k) {
+                            //println!("found an existing z on iter {}, exiting", itercount);
+                            break;
+                        }
+                        periods.insert(k, itercount);
                     }
                 }
                 if escaped {
