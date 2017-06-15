@@ -1,6 +1,7 @@
 
 extern crate argparse;
 extern crate image;
+extern crate regex;
 extern crate rand;
 extern crate time;
 extern crate num;
@@ -11,16 +12,19 @@ use num::complex::Complex;
 use std::time::Duration;
 use std::str::FromStr;
 use std::f64::consts;
+use std::ops::Deref;
 use std::path::Path;
 use std::io::Write;
-use std::cmp::max;
+use std::cmp::{min, max};
 use std::fs::File;
+use std::io::Read;
 use std::thread;
 use rand::Rng;
 
 use image::Pixel;
 
 use argparse::{ArgumentParser, Store};
+use regex::Regex;
 use std::io;
 
 
@@ -81,18 +85,25 @@ impl Img {
     pub fn pix_val(&mut self, x: i64, y: i64) -> i64 {
         self.pixels[((self.height * y as i64) + x as i64) as usize]
     }
+    /// Returns the pixel specified scaled to a u8 by passing the raw value of the pixel and the
+    /// maximum pixel value within the image to delegate. `delegate` must return as floating point
+    /// value between 0.0 and 1.0, inclusive.
+    pub fn scaled_pix_delegate<F>(&self, x: i64, y: i64, delegate: F) -> u8
+        where F: Fn(f64, f64) -> f64
+    {
+        let val = self.pixels[((self.height * y as i64) + x as i64) as usize] as f64;
+        (delegate(val, self.maximum as f64) * 255.0) as u8
+    }
     pub fn scaled_pix_val(&self, x: i64, y: i64) -> u8 {
-        let val = self.pixels[((self.height * y as i64) + x as i64) as usize];
-        (fexp(val as f64, 0.001) / fexp(self.maximum as f64, 0.001) * 255.0) as u8
-        // These other scaling methods lead to somewhat less "nice looking" intensity scaling
-        //(log(val as f64, 0.01) / log(self.maximum as f64, 0.01) * 255.0) as u8
-        //((val as f64 / self.maximum as f64) * 255.0) as u8
+        self.scaled_pix_delegate(x,
+                                 y,
+                                 |val, mx| (fexp(val as f64, 0.001) / fexp(mx as f64, 0.001)))
     }
 }
 
 // write_ppm writes a PPM formated image from a vector of Img structs
 fn write_ppm(imgs: Vec<Img>, fname: String) {
-    let mut ppm = File::create(fname.as_str()).unwrap();
+    let mut ppm = std::io::BufWriter::new(File::create(fname.as_str()).unwrap());
 
     write!(ppm, "P3\n# Created by leland batey RustPPM\n").unwrap();
     write!(ppm, "{} {}\n", imgs[0].width, imgs[0].height).unwrap();
@@ -108,6 +119,89 @@ fn write_ppm(imgs: Vec<Img>, fname: String) {
                imgs[2].pixels[pidx])
                 .unwrap();
     }
+}
+
+/// read_ppm reads a plain ppm file into a triplet of Img structs.
+fn read_ppm(fname: String) -> Vec<Img> {
+    let mut f = File::open(fname).unwrap();
+    let mut contents = String::new();
+    f.read_to_string(&mut contents).unwrap();
+    let re = Regex::new(r"#.*").unwrap();
+    let nocomments = re.replace_all(contents.as_str(), "");
+    let lines = nocomments.split('\n').collect::<Vec<&str>>();
+    // Simple state machine for parsing PPM
+    enum State {
+        awaitMagicNum,
+        awaitWidth,
+        awaitHeight,
+        awaitMaxval,
+        awaitRed,
+        awaitGreen,
+        awaitBlue,
+    }
+    // Our vector of images, each representing a color channel, in order [r, g, b].
+    let mut imgs: Vec<Img> = vec![];
+    let mut cur: State = State::awaitMagicNum;
+    let mut height: i64 = 0;
+    let mut width: i64 = 0;
+
+    let mut x = 0;
+    let mut y = 0;
+    for line in lines {
+        if line == "" {
+            continue;
+        }
+        let tokens = line.split(char::is_whitespace).collect::<Vec<&str>>();
+        for token in tokens {
+            if token == "" {
+                continue;
+            }
+            match cur {
+                State::awaitMagicNum => {
+                    if token == "P3" {
+                        cur = State::awaitWidth;
+                    }
+                }
+                State::awaitWidth => {
+                    width = token.parse().unwrap();
+                    cur = State::awaitHeight;
+                }
+                State::awaitHeight => {
+                    height = token.parse().unwrap();
+                    cur = State::awaitMaxval;
+                }
+                State::awaitMaxval => {
+                    // We actually ignore the maxval and calculate that on a per-channel level
+                    // automatically since each channel of RGB is represented as its own Img
+                    // structure.
+                    cur = State::awaitRed;
+                    // But, let's take the time now to initialize our images
+                    imgs.push(Img::new(width, height));
+                    imgs.push(Img::new(width, height));
+                    imgs.push(Img::new(width, height));
+
+                }
+                State::awaitRed => {
+                    imgs[0].set_px(x, y, token.parse().unwrap());
+                    cur = State::awaitGreen;
+                }
+                State::awaitGreen => {
+                    imgs[1].set_px(x, y, token.parse().unwrap());
+                    cur = State::awaitBlue;
+                }
+                State::awaitBlue => {
+                    imgs[2].set_px(x, y, token.parse().unwrap());
+                    cur = State::awaitRed;
+                    x += 1;
+                }
+            }
+            if x == width {
+                y += 1;
+                x = 0;
+            }
+        }
+    }
+    return imgs;
 }
 
 struct Waypoint {
@@ -134,11 +228,11 @@ struct BuddhaConf {
     centerx: f64,
     centery: f64,
     zoomlevel: f64,
-    sample_multiplier: f64,
+    trajectory_count: usize,
 }
 
 // tells us if a point in the complex plane will loop forever by telling us if it's within the main
-// cardiod or within a second-order bulb.
+// cardiod or within the second-order bulb.
 fn will_loop_forever(z: Complex<f64>) -> bool {
     let x = z.re;
     let y = z.im;
@@ -154,17 +248,21 @@ fn will_loop_forever(z: Complex<f64>) -> bool {
 
 
 fn render_buddhabort(c: BuddhaConf) -> Vec<Img> {
-
     let startzoom = 2.0;
     let (startx, stopx) = (c.centerx - (startzoom / (2.0 as f64).powf(c.zoomlevel)),
                            c.centerx + (startzoom / (2.0 as f64).powf(c.zoomlevel)));
     let (starty, stopy) = (c.centery - (startzoom / (2.0 as f64).powf(c.zoomlevel)),
                            c.centery + (startzoom / (2.0 as f64).powf(c.zoomlevel)));
-    let MAX_TRAJECTORIES: usize = (c.width as f64 * c.height as f64 * c.sample_multiplier) as usize;
+    let MAX_TRAJECTORIES: usize = c.trajectory_count;
 
     let mut children = vec![];
 
-    let max_thread_traj = (MAX_TRAJECTORIES / c.thread_count);
+    let max_thread_traj = max(1, (MAX_TRAJECTORIES / c.thread_count));
+    let to_recieve: usize = min(c.trajectory_count, (max_thread_traj * c.thread_count));
+    println!("Spawning {} threads, each producing {} trajectories, for a total of {} trajectories being produced",
+             c.thread_count,
+             max_thread_traj,
+             to_recieve);
     let (tx, rx) = channel();
     for idx in 0..c.thread_count {
         let child_tx = tx.clone();
@@ -193,11 +291,10 @@ fn render_buddhabort(c: BuddhaConf) -> Vec<Img> {
                 if will_loop_forever(cn) {
                     continue;
                 }
-                let mut final_iteration = 0;
+                let mut periods = HashMap::new();
                 for itercount in 0..tconf.max_iterations {
+                    trajectory.length = itercount;
                     if escaped {
-                        trajectory.length = itercount;
-                        final_iteration = itercount;
                         break;
                     }
                     z = z * z + cn;
@@ -218,9 +315,25 @@ fn render_buddhabort(c: BuddhaConf) -> Vec<Img> {
                     if z.norm() > 2.0 {
                         escaped = true;
                     }
+                    // Check if we've encountered this point before (useful for avoiding cyclical
+                    // but never ending z's). This bit of math is a fancy way of checking if
+                    // itercount is a power of 2
+                    if itercount & (itercount - 1) == 0 {
+                        let k = format!("{:?}", z);
+                        if periods.contains_key(&k) {
+                            //println!("found an existing z on iter {}, exiting", itercount);
+                            break;
+                        }
+                        periods.insert(k, itercount);
+                    }
                 }
                 if escaped {
                     if !(trajectory.length < tconf.min_iterations) {
+                        //println!("length: {}, dist: {}, waypoints: {}, did escape: '{}'",
+                        //trajectory.length,
+                        //trajectory.init_c.norm(),
+                        //trajectory.waypoints.len(),
+                        //trajectory.init_c);
                         match child_tx.send(trajectory) {
                             Ok(_) => (),
                             Err(_) => break,
@@ -252,7 +365,7 @@ fn render_buddhabort(c: BuddhaConf) -> Vec<Img> {
 
     // Receive each trajectory found by the workers, using the waypoints of that trajectory to
     // increment brightness values of the output images.
-    for traj in 0..(max_thread_traj * c.thread_count) {
+    for traj in 0..to_recieve {
         match rx.recv_timeout(timeout) {
             Ok(trajectory) => {
                 if (traj % max((MAX_TRAJECTORIES / 100), 1)) == 0 {
@@ -301,8 +414,51 @@ fn render_buddhabort(c: BuddhaConf) -> Vec<Img> {
     return imgs;
 }
 
+// rescale_ppm accepts the path of a PPM file, reads that ppm file, applies several different
+// scaling functions to the values of each pixel in the PPM and saves a new PNG for each scaling
+// function.
+fn rescale_ppm(ppmname: String) {
+
+    let imgs = read_ppm(ppmname.clone());
+    println!("{}", imgs.len());
+    println!("{}x{}", imgs[1].width, imgs[0].height);
+    let mut scaling_funcs: Vec<(&str, Box<Fn(f64, f64) -> f64>)> = Vec::new();
+    scaling_funcs.push(("fexp0_001",
+                        Box::new(|val, mx| (fexp(val as f64, 0.001) / fexp(mx as f64, 0.001)))));
+    scaling_funcs.push(("fexp0_005",
+                        Box::new(|val, mx| (fexp(val as f64, 0.005) / fexp(mx as f64, 0.005)))));
+    scaling_funcs.push(("fexp0_010",
+                        Box::new(|val, mx| (fexp(val as f64, 0.010) / fexp(mx as f64, 0.010)))));
+    scaling_funcs.push(("fexp0_050",
+                        Box::new(|val, mx| (fexp(val as f64, 0.050) / fexp(mx as f64, 0.050)))));
+    scaling_funcs.push(("fexp0_100",
+                        Box::new(|val, mx| (fexp(val as f64, 0.100) / fexp(mx as f64, 0.100)))));
+    scaling_funcs.push(("log1_0", Box::new(|val, mx| log(val as f64, 1.0) / log(mx as f64, 1.0))));
+    scaling_funcs.push(("log0_5", Box::new(|val, mx| log(val as f64, 0.5) / log(mx as f64, 0.5))));
+    scaling_funcs.push(("log0_1", Box::new(|val, mx| log(val as f64, 0.1) / log(mx as f64, 0.1))));
+    scaling_funcs
+        .push(("log0_01", Box::new(|val, mx| log(val as f64, 0.01) / log(mx as f64, 0.01))));
+
+    for func in scaling_funcs {
+        let mut imgbuf = image::ImageBuffer::<image::Rgb<u8>, Vec<u8>>::new(imgs[0].width as u32,
+                                                                            imgs[0].height as u32);
+        for (x, y, pixel) in imgbuf.enumerate_pixels_mut() {
+            let r = imgs[0].scaled_pix_delegate(x as i64, y as i64, func.1.deref());
+            let g = imgs[1].scaled_pix_delegate(x as i64, y as i64, func.1.deref());
+            let b = imgs[2].scaled_pix_delegate(x as i64, y as i64, func.1.deref());
+
+            *pixel = image::Rgb([r, g, b]);
+        }
+        let pngname = ppmname.clone() + func.0 + ".png";
+        let ref mut fout = File::create(&Path::new(pngname.as_str())).unwrap();
+        let _ = image::ImageRgb8(imgbuf).save(fout, image::PNG);
+    }
+}
+
 
 fn main() {
+    let mut ppmname = "".to_owned();
+
     let mut thread_count = 3;
     let mut max_iterations: i64 = 1024;
     let mut min_iterations: i64 = 0;
@@ -310,12 +466,14 @@ fn main() {
     let mut imgx: i64 = 4096;
     let mut imgy: i64 = 4096;
 
-    let mut samplescale = 5.0;
+    let mut samplescale = 1.5;
 
     let (mut centerx, mut centery) = (-0.74, 0.0);
     let mut zoomlevel = 1.0;
 
     let mut sample_multiplier: f64 = 200.0;
+
+    let mut trajectory_count: usize = 0;
 
     {
         let mut argparse = ArgumentParser::new();
@@ -356,11 +514,30 @@ fn main() {
                         Store,
                         "Number of samples per pixel (default 200)");
         argparse
+            .refer(&mut trajectory_count)
+            .add_option(&["--trajectory-count"],
+                        Store,
+                        "Absolute number of trajectories to find");
+        argparse
             .refer(&mut samplescale)
             .add_option(&["--sample_scale"],
                         Store,
                         "Size of sampling area compared to viewing area (default 5)");
+        argparse
+            .refer(&mut ppmname)
+            .add_option(&["--rescale-ppm"],
+                        Store,
+                        "Name of ppm to rescale with different algorithms");
         argparse.parse_args_or_exit();
+    }
+
+    if ppmname != "" {
+        rescale_ppm(ppmname);
+        return;
+    }
+
+    if trajectory_count == 0 {
+        trajectory_count = (imgx as f64 * imgy as f64 * sample_multiplier) as usize;
     }
 
     let conf = BuddhaConf {
@@ -373,7 +550,7 @@ fn main() {
         centerx: centerx,
         centery: centery,
         zoomlevel: zoomlevel,
-        sample_multiplier: sample_multiplier,
+        trajectory_count: trajectory_count,
     };
 
 
