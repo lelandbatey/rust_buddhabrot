@@ -10,3 +10,7 @@ image = "*"
 rand = "0.3"
 time = "*"
 num = "0.1"
+
+serde_derive = "1.0"
+serde = "1.0"
+serde_json = "1.0"

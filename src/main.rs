@@ -4,29 +4,33 @@ extern crate image;
 extern crate regex;
 extern crate rand;
 extern crate time;
-extern crate num;
+//extern crate num;
 
 use std::collections::HashMap;
 use std::sync::mpsc::channel;
-use num::complex::Complex;
+//use num::complex::Complex;
 use std::time::Duration;
-use std::str::FromStr;
 use std::f64::consts;
 use std::ops::Deref;
 use std::path::Path;
 use std::io::Write;
 use std::cmp::{min, max};
+use std::ops::{Add, Mul};
 use std::fs::File;
 use std::io::Read;
 use std::thread;
 use rand::Rng;
-
-use image::Pixel;
+use std::fmt;
 
 use argparse::{ArgumentParser, Store};
 use regex::Regex;
 use std::io;
 
+#[macro_use]
+extern crate serde_derive;
+
+extern crate serde;
+extern crate serde_json;
 
 struct Img {
     height: i64,
@@ -34,6 +38,52 @@ struct Img {
     maximum: i64,
     minimum: i64,
     pixels: Vec<i64>,
+}
+
+/// An implementation of Complex numbers. I could use the `num` crate which has an existing generic
+/// implementation of Complex, and in fact that is what I used to use. However, I couldn't get it
+/// to work with Serde, so I wrote my own implementation with concrete floats that works with
+/// Serde out of the box.
+#[derive(Serialize, Deserialize, Copy, Clone, Debug)]
+struct Complex {
+    re: f64,
+    im: f64,
+}
+
+impl Mul<Complex> for Complex {
+    type Output = Complex;
+    #[inline]
+    fn mul(self, _rhs: Complex) -> Complex {
+        Complex {
+            re: (self.re * _rhs.re) - (self.im * _rhs.im),
+            im: (self.re * _rhs.im) + (self.im * _rhs.re),
+        }
+    }
+}
+
+impl Add<Complex> for Complex {
+    type Output = Complex;
+    fn add(self, _rhs: Complex) -> Complex {
+        Complex {
+            re: self.re + _rhs.re,
+            im: self.im + _rhs.im,
+        }
+    }
+}
+
+impl fmt::Display for Complex {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "({:5.1}+{:5.1}j)", self.re, self.im)
+    }
+}
+
+impl Complex {
+    pub fn new(re: f64, im: f64) -> Complex {
+        return Complex { re: re, im: im };
+    }
+    pub fn norm(&self) -> f64 {
+        self.re.hypot(self.im)
+    }
 }
 
 fn fexp(x: f64, factor: f64) -> f64 {
@@ -44,6 +94,10 @@ fn log(x: f64, factor: f64) -> f64 {
     (factor * x + 1.0).ln()
 }
 
+/// The Img struct is the simplest possible implementation of an image: a two dimensional array of
+/// pixels, each pixel represented only as a single integer representing the brightness of that
+/// pixel. Multiple Img structs together can represent an RGB image, with one Img struct per
+/// channel.
 impl Img {
     pub fn new(h: i64, w: i64) -> Img {
         Img {
@@ -82,9 +136,6 @@ impl Img {
             }
         }
     }
-    pub fn pix_val(&mut self, x: i64, y: i64) -> i64 {
-        self.pixels[((self.height * y as i64) + x as i64) as usize]
-    }
     /// Returns the pixel specified scaled to a u8 by passing the raw value of the pixel and the
     /// maximum pixel value within the image to delegate. `delegate` must return as floating point
     /// value between 0.0 and 1.0, inclusive.
@@ -110,14 +161,14 @@ fn write_ppm(imgs: Vec<Img>, fname: String) {
     write!(ppm,
            "{}\n",
            max(imgs[0].maximum, max(imgs[1].maximum, imgs[2].maximum)))
-            .unwrap();
+        .unwrap();
     for pidx in 0..imgs[0].pixels.len() {
         write!(ppm,
                "{} {} {}\n",
                imgs[0].pixels[pidx],
                imgs[1].pixels[pidx],
                imgs[2].pixels[pidx])
-                .unwrap();
+            .unwrap();
     }
 }
 
@@ -131,17 +182,17 @@ fn read_ppm(fname: String) -> Vec<Img> {
     let lines = nocomments.split('\n').collect::<Vec<&str>>();
     // Simple state machine for parsing PPM
     enum State {
-        awaitMagicNum,
-        awaitWidth,
-        awaitHeight,
-        awaitMaxval,
-        awaitRed,
-        awaitGreen,
-        awaitBlue,
+        AwaitMagicNum,
+        AwaitWidth,
+        AwaitHeight,
+        AwaitMaxval,
+        AwaitRed,
+        AwaitGreen,
+        AwaitBlue,
     }
     // Our vector of images, each representing a color channel, in order [r, g, b].
     let mut imgs: Vec<Img> = vec![];
-    let mut cur: State = State::awaitMagicNum;
+    let mut cur: State = State::AwaitMagicNum;
     let mut height: i64 = 0;
     let mut width: i64 = 0;
 
@@ -157,41 +208,41 @@ fn read_ppm(fname: String) -> Vec<Img> {
                 continue;
             }
             match cur {
-                State::awaitMagicNum => {
+                State::AwaitMagicNum => {
                     if token == "P3" {
-                        cur = State::awaitWidth;
+                        cur = State::AwaitWidth;
                     }
                 }
-                State::awaitWidth => {
+                State::AwaitWidth => {
                     width = token.parse().unwrap();
-                    cur = State::awaitHeight;
+                    cur = State::AwaitHeight;
                 }
-                State::awaitHeight => {
+                State::AwaitHeight => {
                     height = token.parse().unwrap();
-                    cur = State::awaitMaxval;
+                    cur = State::AwaitMaxval;
                 }
-                State::awaitMaxval => {
+                State::AwaitMaxval => {
                     // We actually ignore the maxval and calculate that on a per-channel level
                     // automatically since each channel of RGB is represented as its own Img
                     // structure.
-                    cur = State::awaitRed;
+                    cur = State::AwaitRed;
                     // But, let's take the time now to initialize our images
                     imgs.push(Img::new(width, height));
                     imgs.push(Img::new(width, height));
                     imgs.push(Img::new(width, height));
 
                 }
-                State::awaitRed => {
+                State::AwaitRed => {
                     imgs[0].set_px(x, y, token.parse().unwrap());
-                    cur = State::awaitGreen;
+                    cur = State::AwaitGreen;
                 }
-                State::awaitGreen => {
+                State::AwaitGreen => {
                     imgs[1].set_px(x, y, token.parse().unwrap());
-                    cur = State::awaitBlue;
+                    cur = State::AwaitBlue;
                 }
-                State::awaitBlue => {
+                State::AwaitBlue => {
                     imgs[2].set_px(x, y, token.parse().unwrap());
-                    cur = State::awaitRed;
+                    cur = State::AwaitRed;
                     x += 1;
                 }
             }
@@ -204,14 +255,16 @@ fn read_ppm(fname: String) -> Vec<Img> {
     return imgs;
 }
 
+
+#[derive(Serialize, Deserialize, Debug)]
 struct Waypoint {
     img_x: i32,
     img_y: i32,
-    point: Complex<f64>,
+    point: Complex,
 }
 
 struct Trajectory {
-    init_c: Complex<f64>,
+    init_c: Complex,
     waypoints: Vec<Waypoint>,
     /// Length is the number of valid waypoints within the
     length: i64,
@@ -233,7 +286,7 @@ struct BuddhaConf {
 
 // tells us if a point in the complex plane will loop forever by telling us if it's within the main
 // cardiod or within the second-order bulb.
-fn will_loop_forever(z: Complex<f64>) -> bool {
+fn will_loop_forever(z: Complex) -> bool {
     let x = z.re;
     let y = z.im;
     let p: f64 = ((x - 0.25).powi(2) + y.powi(2)).sqrt();
@@ -253,13 +306,14 @@ fn render_buddhabort(c: BuddhaConf) -> Vec<Img> {
                            c.centerx + (startzoom / (2.0 as f64).powf(c.zoomlevel)));
     let (starty, stopy) = (c.centery - (startzoom / (2.0 as f64).powf(c.zoomlevel)),
                            c.centery + (startzoom / (2.0 as f64).powf(c.zoomlevel)));
-    let MAX_TRAJECTORIES: usize = c.trajectory_count;
+    let max_trajectories: usize = c.trajectory_count;
 
     let mut children = vec![];
 
-    let max_thread_traj = max(1, (MAX_TRAJECTORIES / c.thread_count));
+    let max_thread_traj = max(1, (max_trajectories / c.thread_count));
     let to_recieve: usize = min(c.trajectory_count, (max_thread_traj * c.thread_count));
-    println!("Spawning {} threads, each producing {} trajectories, for a total of {} trajectories being produced",
+    println!("Spawning {} threads, each producing {} trajectories, for a total of {} \
+              trajectories being produced",
              c.thread_count,
              max_thread_traj,
              to_recieve);
@@ -329,11 +383,6 @@ fn render_buddhabort(c: BuddhaConf) -> Vec<Img> {
                 }
                 if escaped {
                     if !(trajectory.length < tconf.min_iterations) {
-                        //println!("length: {}, dist: {}, waypoints: {}, did escape: '{}'",
-                        //trajectory.length,
-                        //trajectory.init_c.norm(),
-                        //trajectory.waypoints.len(),
-                        //trajectory.init_c);
                         match child_tx.send(trajectory) {
                             Ok(_) => (),
                             Err(_) => break,
@@ -349,9 +398,8 @@ fn render_buddhabort(c: BuddhaConf) -> Vec<Img> {
     }
 
     // Our vector of images, each representing a color channel, in order [r, g, b].
-    let mut imgs: Vec<Img> = vec![Img::new(c.width, c.height),
-                                  Img::new(c.width, c.height),
-                                  Img::new(c.width, c.height)];
+    let mut imgs: Vec<Img> =
+        vec![Img::new(c.width, c.height), Img::new(c.width, c.height), Img::new(c.width, c.height)];
 
     let mut logfile = File::create("itercounts.txt").unwrap();
     let mut iter_freq: HashMap<i64, i64> = HashMap::new();
@@ -368,9 +416,9 @@ fn render_buddhabort(c: BuddhaConf) -> Vec<Img> {
     for traj in 0..to_recieve {
         match rx.recv_timeout(timeout) {
             Ok(trajectory) => {
-                if (traj % max((MAX_TRAJECTORIES / 100), 1)) == 0 {
+                if (traj % max((max_trajectories / 100), 1)) == 0 {
                     print!("{}%\r",
-                           ((traj as f64 / MAX_TRAJECTORIES as f64) * 100.0) as u32);
+                           ((traj as f64 / max_trajectories as f64) * 100.0) as u32);
                     io::stdout().flush().unwrap();
                 }
                 let final_iteration = trajectory.length;
@@ -457,6 +505,19 @@ fn rescale_ppm(ppmname: String) {
 
 
 fn main() {
+    //let c = Waypoint {
+    //img_x: 10,
+    //img_y: 10,
+    //point: Complex::new(1.0, 2.0),
+    //};
+    //let v: Vec<Waypoint> = vec![c];
+    //let serialized = serde_json::to_string(&v).unwrap();
+    //println!("serialized = {}", serialized);
+
+    //let deserialized: Vec<Waypoint> = serde_json::from_str(&serialized).unwrap();
+    //println!("deserialized = {:?}", deserialized);
+    //return;
+
     let mut ppmname = "".to_owned();
 
     let mut thread_count = 3;
@@ -478,53 +539,41 @@ fn main() {
     {
         let mut argparse = ArgumentParser::new();
         argparse.set_description("Render a buddhabrot set as PNG");
-        argparse
-            .refer(&mut thread_count)
+        argparse.refer(&mut thread_count)
             .add_option(&["-t", "--threads"],
                         Store,
                         "Number of threads to use (default 4)");
-        argparse
-            .refer(&mut imgx)
+        argparse.refer(&mut imgx)
             .add_option(&["--width"], Store, "Width of the output image");
-        argparse
-            .refer(&mut imgy)
+        argparse.refer(&mut imgy)
             .add_option(&["--height"], Store, "Height of the output image");
-        argparse
-            .refer(&mut max_iterations)
+        argparse.refer(&mut max_iterations)
             .add_option(&["--max_iters"],
                         Store,
                         "Maximum number of allowed iterations.");
-        argparse
-            .refer(&mut min_iterations)
+        argparse.refer(&mut min_iterations)
             .add_option(&["--min_iters"],
                         Store,
                         "Minimum required number of iterations.");
-        argparse
-            .refer(&mut centerx)
+        argparse.refer(&mut centerx)
             .add_option(&["-x"], Store, "The center X coordinate");
-        argparse
-            .refer(&mut centery)
+        argparse.refer(&mut centery)
             .add_option(&["-y"], Store, "The center Y coordinate");
-        argparse
-            .refer(&mut zoomlevel)
+        argparse.refer(&mut zoomlevel)
             .add_option(&["-z", "--zoom"], Store, "Amount of zoom in render");
-        argparse
-            .refer(&mut sample_multiplier)
+        argparse.refer(&mut sample_multiplier)
             .add_option(&["-s", "--samples"],
                         Store,
                         "Number of samples per pixel (default 200)");
-        argparse
-            .refer(&mut trajectory_count)
+        argparse.refer(&mut trajectory_count)
             .add_option(&["--trajectory-count"],
                         Store,
                         "Absolute number of trajectories to find");
-        argparse
-            .refer(&mut samplescale)
+        argparse.refer(&mut samplescale)
             .add_option(&["--sample_scale"],
                         Store,
                         "Size of sampling area compared to viewing area (default 5)");
-        argparse
-            .refer(&mut ppmname)
+        argparse.refer(&mut ppmname)
             .add_option(&["--rescale-ppm"],
                         Store,
                         "Name of ppm to rescale with different algorithms");
