@@ -161,14 +161,14 @@ fn write_ppm(imgs: Vec<Img>, fname: String) {
     write!(ppm,
            "{}\n",
            max(imgs[0].maximum, max(imgs[1].maximum, imgs[2].maximum)))
-        .unwrap();
+            .unwrap();
     for pidx in 0..imgs[0].pixels.len() {
         write!(ppm,
                "{} {} {}\n",
                imgs[0].pixels[pidx],
                imgs[1].pixels[pidx],
                imgs[2].pixels[pidx])
-            .unwrap();
+                .unwrap();
     }
 }
 
@@ -256,15 +256,17 @@ fn read_ppm(fname: String) -> Vec<Img> {
 }
 
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 struct Waypoint {
     img_x: i32,
     img_y: i32,
     point: Complex,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
 struct Trajectory {
     init_c: Complex,
+    #[serde(skip_serializing)]
     waypoints: Vec<Waypoint>,
     /// Length is the number of valid waypoints within the
     length: i64,
@@ -398,8 +400,9 @@ fn render_buddhabort(c: BuddhaConf) -> Vec<Img> {
     }
 
     // Our vector of images, each representing a color channel, in order [r, g, b].
-    let mut imgs: Vec<Img> =
-        vec![Img::new(c.width, c.height), Img::new(c.width, c.height), Img::new(c.width, c.height)];
+    let mut imgs: Vec<Img> = vec![Img::new(c.width, c.height),
+                                  Img::new(c.width, c.height),
+                                  Img::new(c.width, c.height)];
 
     let mut logfile = File::create("itercounts.txt").unwrap();
     let mut iter_freq: HashMap<i64, i64> = HashMap::new();
@@ -410,6 +413,11 @@ fn render_buddhabort(c: BuddhaConf) -> Vec<Img> {
     // just print what we've got. The timeout is thus based on a bare minimum, 1/4 of a second,
     // plus 100 * the minimum number of iterations. It's a pretty usable heuristic.
     let timeout = Duration::from_millis(250 + (100 * c.min_iterations) as u64);
+
+    let starttime = time::strftime("%Y-%m-%d_%H:%M:%S", &time::now()).unwrap();
+    // Open up a log file in which to record all our trajectories
+    //let mut record = std::io::BufWriter::new(File::create(starttime + "-trajectory_log" + ".json").unwrap());
+    let mut record = File::create(starttime + "-trajectory_log" + ".json").unwrap();
 
     // Receive each trajectory found by the workers, using the waypoints of that trajectory to
     // increment brightness values of the output images.
@@ -424,6 +432,10 @@ fn render_buddhabort(c: BuddhaConf) -> Vec<Img> {
                 let final_iteration = trajectory.length;
                 let freq = iter_freq.entry(final_iteration).or_insert(0);
                 *freq += 1;
+                // Write this trajectory to a file
+                let line = serde_json::to_string(&(trajectory.clone())).unwrap();
+                write!(record, "{}\n", line).unwrap();
+
                 for p in trajectory.waypoints {
                     let iter_span: f64 = (c.max_iterations - c.min_iterations) as f64;
                     let min_iters: f64 = c.min_iterations as f64;
@@ -505,18 +517,7 @@ fn rescale_ppm(ppmname: String) {
 
 
 fn main() {
-    //let c = Waypoint {
-    //img_x: 10,
-    //img_y: 10,
-    //point: Complex::new(1.0, 2.0),
-    //};
-    //let v: Vec<Waypoint> = vec![c];
-    //let serialized = serde_json::to_string(&v).unwrap();
-    //println!("serialized = {}", serialized);
-
-    //let deserialized: Vec<Waypoint> = serde_json::from_str(&serialized).unwrap();
-    //println!("deserialized = {:?}", deserialized);
-    //return;
+    let starttime = time::strftime("%Y-%m-%d_%H:%M:%S", &time::now()).unwrap();
 
     let mut ppmname = "".to_owned();
 
@@ -539,41 +540,53 @@ fn main() {
     {
         let mut argparse = ArgumentParser::new();
         argparse.set_description("Render a buddhabrot set as PNG");
-        argparse.refer(&mut thread_count)
+        argparse
+            .refer(&mut thread_count)
             .add_option(&["-t", "--threads"],
                         Store,
                         "Number of threads to use (default 4)");
-        argparse.refer(&mut imgx)
+        argparse
+            .refer(&mut imgx)
             .add_option(&["--width"], Store, "Width of the output image");
-        argparse.refer(&mut imgy)
+        argparse
+            .refer(&mut imgy)
             .add_option(&["--height"], Store, "Height of the output image");
-        argparse.refer(&mut max_iterations)
+        argparse
+            .refer(&mut max_iterations)
             .add_option(&["--max_iters"],
                         Store,
                         "Maximum number of allowed iterations.");
-        argparse.refer(&mut min_iterations)
+        argparse
+            .refer(&mut min_iterations)
             .add_option(&["--min_iters"],
                         Store,
                         "Minimum required number of iterations.");
-        argparse.refer(&mut centerx)
+        argparse
+            .refer(&mut centerx)
             .add_option(&["-x"], Store, "The center X coordinate");
-        argparse.refer(&mut centery)
+        argparse
+            .refer(&mut centery)
             .add_option(&["-y"], Store, "The center Y coordinate");
-        argparse.refer(&mut zoomlevel)
+        argparse
+            .refer(&mut zoomlevel)
             .add_option(&["-z", "--zoom"], Store, "Amount of zoom in render");
-        argparse.refer(&mut sample_multiplier)
+        argparse
+            .refer(&mut sample_multiplier)
             .add_option(&["-s", "--samples"],
                         Store,
                         "Number of samples per pixel (default 200)");
-        argparse.refer(&mut trajectory_count)
+        argparse
+            .refer(&mut trajectory_count)
             .add_option(&["--trajectory-count"],
                         Store,
                         "Absolute number of trajectories to find");
-        argparse.refer(&mut samplescale)
+        argparse
+            .refer(&mut samplescale)
             .add_option(&["--sample_scale"],
                         Store,
                         "Size of sampling area compared to viewing area (default 5)");
-        argparse.refer(&mut ppmname)
+        argparse
+            .refer(&mut ppmname)
             .add_option(&["--rescale-ppm"],
                         Store,
                         "Name of ppm to rescale with different algorithms");
@@ -617,14 +630,14 @@ fn main() {
         *pixel = image::Rgb([r, g, b]);
     }
 
-    let rightnow = time::strftime("fractal%Y-%m-%d_%H:%M:%S", &time::now()).unwrap();
+    let rightnow = time::strftime("%Y-%m-%d_%H:%M:%S", &time::now()).unwrap();
     println!("Completed at {}", rightnow);
 
     // Save as a plain ppm
-    write_ppm(imgs, rightnow.clone() + ".ppm");
+    write_ppm(imgs, starttime.clone() + "-fractal" + ".ppm");
 
     // Save the image as “fractal.png”
-    let pngname = rightnow + ".png";
+    let pngname = starttime.clone() + ".png";
     let ref mut fout = File::create(&Path::new(pngname.as_str())).unwrap();
     // We must indicate the image’s color type and what format to save as
     let _ = image::ImageRgb8(imgbuf).save(fout, image::PNG);
