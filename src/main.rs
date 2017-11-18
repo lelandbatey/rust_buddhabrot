@@ -130,7 +130,7 @@ fn main() {
         trajectory_count: trajectory_count,
     };
 
-    println!("Starting with these values: {:?}", conf);
+    println!("Starting with these values: {}", conf);
 
     let imgs: Vec<ppm::Img> = buddha::render_buddhabort(conf);
 

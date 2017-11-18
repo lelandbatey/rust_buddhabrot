@@ -102,11 +102,12 @@ pub struct Conf {
     pub zoomlevel: f64,
     pub trajectory_count: usize,
 }
+
 impl fmt::Display for Conf {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "Conf{
+            "Conf{{
     json_file: {},
     thread_count: {},
     max_iterations: {},
@@ -118,7 +119,7 @@ impl fmt::Display for Conf {
     centery: {},
     zoomlevel: {},
     trajectory_count: {}
-}",
+}}",
             self.json_file,
             self.thread_count,
             self.max_iterations,
@@ -286,7 +287,11 @@ pub fn render_buddhabort(c: Conf) -> Vec<ppm::Img> {
                     );
                     io::stdout().flush().unwrap();
                 }
-                write!(json_file, "{}\n", traj.to_string()).unwrap();
+                write!(
+                    json_file,
+                    "{}\n",
+                    serde_json::to_string(&trajectory).unwrap()
+                ).unwrap();
                 let final_iteration = trajectory.length;
                 let freq = iter_freq.entry(final_iteration).or_insert(0);
                 *freq += 1;
