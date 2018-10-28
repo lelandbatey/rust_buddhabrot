@@ -1,7 +1,5 @@
 
-extern crate image;
 extern crate rand;
-extern crate time;
 
 use std::collections::HashMap;
 use std::sync::mpsc::channel;
