@@ -1,0 +1,6 @@
+[package]
+name = "trajectory-render"
+version = "0.1.0"
+authors = ["Leland Batey <lelandbatey@lelandbatey.com>"]
+
+[dependencies]
