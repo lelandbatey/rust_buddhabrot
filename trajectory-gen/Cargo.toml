@@ -4,4 +4,11 @@ version = "0.1.0"
 authors = ["Leland Batey <lelandbatey@lelandbatey.com>"]
 
 [dependencies]
+buddhabrot = {path = "../buddhabrot"}
+
+time = "*"
+rand = "0.3"
 argparse = "*"
+
+serde = "1.0"
+serde_json = "1.0"

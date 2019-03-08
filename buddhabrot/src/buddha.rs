@@ -25,8 +25,8 @@ use ppm;
 /// Serde out of the box.
 #[derive(Serialize, Deserialize, Copy, Clone, Debug)]
 pub struct Complex {
-    re: f64,
-    im: f64,
+    pub re: f64,
+    pub im: f64,
 }
 
 impl Mul<Complex> for Complex {
@@ -69,21 +69,21 @@ impl Complex {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Waypoint {
-    img_x: i32,
-    img_y: i32,
-    point: Complex,
+    pub img_x: i32,
+    pub img_y: i32,
+    pub point: Complex,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Trajectory {
-    init_c: Complex,
+    pub init_c: Complex,
     // We won't serialize the "waypoints" field when creating a JSON string, since that would take
     // up way too much space for long trajectories. However, the 'length' field will be serialized
     // which for my purposes is all that'll be needed.
-    #[serde(skip_serializing)]
-    waypoints: Vec<Waypoint>,
+    #[serde(skip)]
+    pub waypoints: Vec<Waypoint>,
     /// Length is the number of valid waypoints within the
-    length: i64,
+    pub length: i64,
 }
 
 #[derive(Clone)]
