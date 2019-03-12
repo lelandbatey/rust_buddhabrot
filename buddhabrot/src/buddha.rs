@@ -67,14 +67,14 @@ impl Complex {
 
 
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Waypoint {
     pub img_x: i32,
     pub img_y: i32,
     pub point: Complex,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Trajectory {
     pub init_c: Complex,
     // We won't serialize the "waypoints" field when creating a JSON string, since that would take

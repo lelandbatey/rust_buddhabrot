@@ -23,6 +23,7 @@ fn main() -> io::Result<()> {
     let mut thread_count = 3;
     let mut height: i64 = 1024;
     let mut width: i64 = 1024;
+    let mut output_fname: String = "image.ppm".to_string();
     {
         let mut argparse = ArgumentParser::new();
         argparse.refer(&mut height).add_option(
@@ -35,11 +36,22 @@ fn main() -> io::Result<()> {
             Store,
             "Width in pixels of the output image (default 1024)",
         );
+        argparse.refer(&mut output_fname).add_option(
+            &["-o", "--output"],
+            Store,
+            "Path of the output image (default 'image.ppm')",
+        );
+        argparse.refer(&mut thread_count).add_option(
+            &["-t", "--threads"],
+            Store,
+            "Number of threads to use (default 3)",
+        );
         argparse.parse_args_or_exit();
     }
     println!("Height: {}", height);
     println!("Width: {}", width);
 
+    let mut trajectories: Vec<Trajectory> = vec![];
     let mut trajectory_count = 0;
     let (s1, r) = unbounded();
     while true {
@@ -50,7 +62,8 @@ fn main() -> io::Result<()> {
                     break;
                 }
                 let traj: Trajectory = serde_json::from_str(input.as_str())?;
-                s1.send(traj).unwrap();
+                s1.send(traj.clone()).unwrap();
+                trajectories.push(traj.clone());
                 trajectory_count += 1;
             }
             Err(error) => {
@@ -68,6 +81,7 @@ fn main() -> io::Result<()> {
         });
     }
 
+    // Our vector of images, each representing a color channel, in order [r, g, b].
     let mut imgs: Vec<ppm::Img> = vec![
         ppm::Img::new(width, height),
         ppm::Img::new(width, height),
@@ -75,24 +89,52 @@ fn main() -> io::Result<()> {
     ];
     let timeout = Duration::from_millis(950);
     let mut wp_added = 0;
-    println!("Trajectory count {}", trajectory_count);
+    println!("Trajectory count {}", trajectories.len());
+    let max_iterations = trajectories.iter().fold(0,             |max, x| if x.length > max { x.length } else { max });
+    let min_iterations = trajectories.iter().fold(std::i64::MAX, |min, x| if x.length < min { x.length } else { min });
+    println!("Max length of trajectory: {}", max_iterations);
+    println!("Min length of trajectory: {}", min_iterations);
     for progress in 0..trajectory_count {
         let trajectory: Trajectory = match wpr.recv_timeout(timeout) {
             Ok(t) => t,
             Err(_) => {break;}
         };
-        println!("Progress {}", progress);
         for p in trajectory.waypoints {
             let (px, py) = calc_pixel_pos(p.point.re, p.point.im, height, width);
             if px == -1 {continue;};
-            imgs[0].incr_px(px, py);
-            imgs[1].incr_px(px, py);
-            imgs[2].incr_px(px, py);
+
+            let final_iteration = trajectory.length;
+            let iter_span: f64 = (max_iterations - min_iterations) as f64;
+            let min_iters: f64 = min_iterations as f64;
+
+            // If we've set a sufficiently high minimum iteration number, then the
+            // distribution of discovered orbits will be much more uniform, so make the
+            // color distribution uniform. Otherwise, have it be inverse log base 10 to
+            // compensate for the large number of small orbits.
+            let red_factor = if min_iterations > 100 { 0.40 } else { 0.10 };
+            let green_factor = if min_iterations > 100 { 0.10 } else { 0.01 };
+
+            let red_min = ((iter_span * red_factor) + min_iters) as i64;
+            let green_min = ((iter_span * green_factor) + min_iters) as i64;
+            let blue_max = green_min;
+            if max_iterations == min_iterations {
+                // If there's only one trajectory, make it white so it's very visible.
+                imgs[0].incr_px(px, py);
+                imgs[1].incr_px(px, py);
+                imgs[2].incr_px(px, py);
+            } else if final_iteration > red_min {
+                imgs[0].incr_px(px, py);
+            } else if final_iteration > green_min {
+                imgs[1].incr_px(px, py);
+            } else if final_iteration < blue_max {
+                imgs[2].incr_px(px, py);
+            }
             wp_added += 1;
         }
     }
     println!("Waypoints added: {}", wp_added);
-    ppm::write_ppm(imgs, "image.ppm".to_string());
+    ppm::write_ppm(&imgs, output_fname.clone());
+    ppm::write_scaled_ppm(&imgs, "scaled_".to_owned()+&output_fname.clone());
     Ok(())
 }
 
@@ -116,10 +158,6 @@ fn calculate_waypoints(receive_traj: Receiver<Trajectory>, send_waypoints: Sende
     // centery : hard coded at 0
     // x span: [-2.5, 1.0]
     // y span: [-1.0, 1.0]
-    let (startx, stopx): (f64, f64) = (-2.5, 1.0);
-    let (starty, stopy): (f64, f64) = (-1.0, 1.0);
-    let xspan = stopx - startx;
-    let yspan = stopy - starty;
 
     while true {
         let old_traj: Trajectory = match receive_traj.try_recv() {

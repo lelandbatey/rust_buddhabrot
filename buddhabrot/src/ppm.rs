@@ -12,6 +12,7 @@ use std;
 
 use self::regex::Regex;
 
+#[derive(Clone)]
 pub struct Img {
     height: i64,
     width: i64,
@@ -20,11 +21,11 @@ pub struct Img {
     pixels: Vec<i64>,
 }
 
-fn fexp(x: f64, factor: f64) -> f64 {
+pub fn fexp(x: f64, factor: f64) -> f64 {
     1.0 - (consts::E.powf(-factor * x))
 }
 
-fn log(x: f64, factor: f64) -> f64 {
+pub fn log(x: f64, factor: f64) -> f64 {
     (factor * x + 1.0).ln()
 }
 
@@ -88,7 +89,7 @@ impl Img {
 }
 
 // write_ppm writes a PPM formated image from a vector of Img structs
-pub fn write_ppm(imgs: Vec<Img>, fname: String) {
+pub fn write_ppm(imgs: &Vec<Img>, fname: String) {
     let mut ppm = std::io::BufWriter::new(File::create(fname.as_str()).unwrap());
 
     write!(ppm, "P3\n# Created by leland batey RustPPM\n").unwrap();
@@ -105,6 +106,26 @@ pub fn write_ppm(imgs: Vec<Img>, fname: String) {
             imgs[0].pixels[pidx],
             imgs[1].pixels[pidx],
             imgs[2].pixels[pidx]
+        ).unwrap();
+    }
+}
+
+// write_ppm writes a PPM formated image from a vector of Img structs
+pub fn write_scaled_ppm(imgs: &Vec<Img>, fname: String) {
+    let mut ppm = std::io::BufWriter::new(File::create(fname.as_str()).unwrap());
+    let scale_fn = |val, mx| {((fexp(val as f64, 0.050) / fexp(mx as f64, 0.050)) * 255.0) as u8};
+    let max_brightness = max(imgs[0].maximum, max(imgs[1].maximum, imgs[2].maximum));
+
+    write!(ppm, "P3\n# Created by leland batey RustPPM\n").unwrap();
+    write!(ppm, "{} {}\n", imgs[0].width, imgs[0].height).unwrap();
+    write!(ppm, "{}\n", scale_fn(max_brightness, max_brightness)).unwrap();
+    for pidx in 0..imgs[0].pixels.len() {
+        write!(
+            ppm,
+            "{} {} {}\n",
+            scale_fn(imgs[0].pixels[pidx], max_brightness),
+            scale_fn(imgs[1].pixels[pidx], max_brightness),
+            scale_fn(imgs[2].pixels[pidx], max_brightness),
         ).unwrap();
     }
 }
