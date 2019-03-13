@@ -1,22 +1,21 @@
-
 //#[macro use]
 extern crate crossbeam_channel;
 
-extern crate serde_json;
 extern crate argparse;
 extern crate serde;
+extern crate serde_json;
 
 extern crate buddhabrot;
 
 use std::collections::HashMap;
-use std::time::Duration;
-use std::thread;
 use std::io;
+use std::thread;
+use std::time::Duration;
 
-use crossbeam_channel::{unbounded, Sender, Receiver};
 use argparse::{ArgumentParser, Store};
+use crossbeam_channel::{unbounded, Receiver, Sender};
 
-use buddhabrot::buddha::{Trajectory, Complex, Waypoint};
+use buddhabrot::buddha::{Complex, Trajectory, Waypoint};
 use buddhabrot::ppm;
 
 fn main() -> io::Result<()> {
@@ -54,12 +53,15 @@ fn main() -> io::Result<()> {
     let mut trajectories: Vec<Trajectory> = vec![];
     let mut trajectory_count = 0;
     let (s1, r) = unbounded();
-    while true {
+    loop {
         let mut input = String::new();
         match io::stdin().read_line(&mut input) {
             Ok(n) => {
                 if n == 0 {
                     break;
+                }
+                if input.trim() == "" {
+                    continue;
                 }
                 let traj: Trajectory = serde_json::from_str(input.as_str())?;
                 s1.send(traj.clone()).unwrap();
@@ -87,21 +89,31 @@ fn main() -> io::Result<()> {
         ppm::Img::new(width, height),
         ppm::Img::new(width, height),
     ];
-    let timeout = Duration::from_millis(950);
     let mut wp_added = 0;
     println!("Trajectory count {}", trajectories.len());
-    let max_iterations = trajectories.iter().fold(0,             |max, x| if x.length > max { x.length } else { max });
-    let min_iterations = trajectories.iter().fold(std::i64::MAX, |min, x| if x.length < min { x.length } else { min });
+    let max_iterations = trajectories
+        .iter()
+        .fold(0, |max, x| if x.length > max { x.length } else { max });
+    let min_iterations =
+        trajectories.iter().fold(
+            std::i64::MAX,
+            |min, x| if x.length < min { x.length } else { min },
+        );
+    let timeout = Duration::from_millis(950 + (100 * max_iterations) as u64);
     println!("Max length of trajectory: {}", max_iterations);
     println!("Min length of trajectory: {}", min_iterations);
-    for progress in 0..trajectory_count {
+    for _ in 0..trajectory_count {
         let trajectory: Trajectory = match wpr.recv_timeout(timeout) {
             Ok(t) => t,
-            Err(_) => {break;}
+            Err(_) => {
+                break;
+            }
         };
-        for p in trajectory.waypoints {
+        for p in &trajectory.waypoints {
             let (px, py) = calc_pixel_pos(p.point.re, p.point.im, height, width);
-            if px == -1 {continue;};
+            if px == -1 {
+                continue;
+            };
 
             let final_iteration = trajectory.length;
             let iter_span: f64 = (max_iterations - min_iterations) as f64;
@@ -133,8 +145,13 @@ fn main() -> io::Result<()> {
         }
     }
     println!("Waypoints added: {}", wp_added);
-    ppm::write_ppm(&imgs, output_fname.clone());
-    ppm::write_scaled_ppm(&imgs, "scaled_".to_owned()+&output_fname.clone());
+    //ppm::write_ppm(&imgs, output_fname.clone());
+
+    let parts: Vec<&str> = output_fname.split(".").collect();
+    let no_ext = &parts[0..parts.len() - 1].join(".");
+    ppm::write_scaled_png(&imgs, "scaled_".to_owned() + no_ext + ".png", |val, mx| {
+        ppm::fexp(val as f64, 0.050) / ppm::fexp(mx as f64, 0.050)
+    });
     Ok(())
 }
 
@@ -159,10 +176,12 @@ fn calculate_waypoints(receive_traj: Receiver<Trajectory>, send_waypoints: Sende
     // x span: [-2.5, 1.0]
     // y span: [-1.0, 1.0]
 
-    while true {
+    loop {
         let old_traj: Trajectory = match receive_traj.try_recv() {
             Ok(t) => t,
-            Err(_) => {break;}
+            Err(_) => {
+                break;
+            }
         };
         let mut escaped = false;
         let mut z = Complex::new(0.0, 0.0);
@@ -176,7 +195,7 @@ fn calculate_waypoints(receive_traj: Receiver<Trajectory>, send_waypoints: Sende
             continue;
         }
         let mut periods = HashMap::new();
-        for itercount in 0..old_traj.length {
+        for itercount in 0..(old_traj.length) {
             trajectory.length = itercount as i64;
             if escaped {
                 break;
@@ -204,19 +223,19 @@ fn calculate_waypoints(receive_traj: Receiver<Trajectory>, send_waypoints: Sende
                 periods.insert(k, itercount);
             }
         }
-        if escaped {
-            match send_waypoints.send(trajectory) {
-                Ok(_) => (),
-                Err(_) => break,
+        match send_waypoints.send(trajectory) {
+            Ok(_) => (),
+            Err(_) => {
+                break;
             }
         }
     }
-
 }
 
 fn calc_pixel_pos(x: f64, y: f64, height: i64, width: i64) -> (i64, i64) {
-    let (startx, stopx): (f64, f64) = (-2.5, 1.0);
-    let (starty, stopy): (f64, f64) = (-1.75, 1.75);
+    //let (startx, stopx): (f64, f64) = (-2.5, 1.0);
+    let (startx, stopx): (f64, f64) = (-2.25, 0.75);
+    let (starty, stopy): (f64, f64) = (-1.5, 1.5);
     let xspan = stopx - startx;
     let yspan = stopy - starty;
 

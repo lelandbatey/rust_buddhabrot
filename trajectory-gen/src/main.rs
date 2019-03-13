@@ -1,19 +1,18 @@
-
 extern crate argparse;
-extern crate serde_json;
-extern crate serde;
 extern crate rand;
+extern crate serde;
+extern crate serde_json;
 extern crate time;
 
 extern crate buddhabrot;
 
-use std::sync::mpsc::{channel, Sender};
 use std::collections::HashMap;
-use std::time::Duration;
+use std::sync::mpsc::{channel, Sender};
 use std::thread;
+use std::time::Duration;
 
-use buddhabrot::buddha::{Trajectory, Complex, Waypoint};
 use argparse::{ArgumentParser, Store};
+use buddhabrot::buddha::{Complex, Trajectory};
 use rand::Rng;
 
 fn main() {
@@ -45,14 +44,23 @@ fn main() {
         );
         argparse.parse_args_or_exit();
     }
-    coordinate_search(thread_count, trajectory_count, max_iterations, min_iterations)
+    coordinate_search(
+        thread_count,
+        trajectory_count,
+        max_iterations,
+        min_iterations,
+    )
 }
-
 
 // Function to coordinate other functions
 // Function to search for candidates and write them to a channel
 // Function to recieve from the channel and write them to the output of choice
-fn coordinate_search(thread_count: usize, trajectory_count: usize, max_iterations: i64, min_iterations: i64) {
+fn coordinate_search(
+    thread_count: usize,
+    trajectory_count: usize,
+    max_iterations: i64,
+    min_iterations: i64,
+) {
     // Choose an output file based on the current time. This file name is a good candidate for a
     // user-providable CLI parameter in the future.
     //let filename = time::strftime("trajectory_candidates_%Y-%m-%d__%H-%M-%S.json", &time::now()).unwrap();
@@ -64,7 +72,8 @@ fn coordinate_search(thread_count: usize, trajectory_count: usize, max_iteration
     // less than the count specified on the CLI
     let per_thread_traj_count: usize = trajectory_count / thread_count;
     let total_trajectory_count: usize = per_thread_traj_count * thread_count;
-    let thread_trajectories: Vec<usize> = (0..thread_count).map(|_| per_thread_traj_count).collect();
+    let thread_trajectories: Vec<usize> =
+        (0..thread_count).map(|_| per_thread_traj_count).collect();
 
     // Start the threads that do the searching
     let (sender, reciever) = channel();
@@ -113,7 +122,12 @@ fn will_loop_forever(z: Complex) -> bool {
     }
     return false;
 }
-fn search_and_transmit(trajectory_count: usize, max_iterations: i64, min_iterations: i64, sender: Sender<Trajectory>) {
+fn search_and_transmit(
+    trajectory_count: usize,
+    max_iterations: i64,
+    min_iterations: i64,
+    sender: Sender<Trajectory>,
+) {
     let mut rng = rand::thread_rng();
     let mut valid_trajectory_count = 0;
     // centerx : hard coded at -0.75
@@ -129,7 +143,10 @@ fn search_and_transmit(trajectory_count: usize, max_iterations: i64, min_iterati
     while valid_trajectory_count < trajectory_count {
         let mut escaped = false;
         let mut z = Complex::new(0.0, 0.0);
-        let cn = Complex::new(startx + rng.gen::<f64>() * xspan, starty + rng.gen::<f64>() * yspan);
+        let cn = Complex::new(
+            startx + rng.gen::<f64>() * xspan,
+            starty + rng.gen::<f64>() * yspan,
+        );
         let mut trajectory: Trajectory = Trajectory {
             init_c: cn,
             waypoints: Vec::new(),
@@ -145,13 +162,6 @@ fn search_and_transmit(trajectory_count: usize, max_iterations: i64, min_iterati
                 break;
             }
             z = z * z + cn;
-            let waypoint = Waypoint {
-                // Ignore the image coordinates as they'll never be used in this program.
-                img_x: 0,
-                img_y: 0,
-                point: z.clone(),
-            };
-            trajectory.waypoints.push(waypoint);
             if z.norm() > 2.0 {
                 escaped = true;
             }

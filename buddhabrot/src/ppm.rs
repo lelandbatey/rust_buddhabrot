@@ -1,14 +1,13 @@
-
 extern crate image;
 extern crate regex;
 
-use std::io::{Read, Write};
-use std::f64::consts;
-use std::path::Path;
-use std::ops::Deref;
-use std::fs::File;
-use std::cmp::max;
 use std;
+use std::cmp::max;
+use std::f64::consts;
+use std::fs::File;
+use std::io::{Read, Write};
+use std::ops::Deref;
+use std::path::Path;
 
 use self::regex::Regex;
 
@@ -21,6 +20,7 @@ pub struct Img {
     pixels: Vec<i64>,
 }
 
+// This fexp scaling function is taken from here: https://www.brodie-tyrrell.org/bbrot/
 pub fn fexp(x: f64, factor: f64) -> f64 {
     1.0 - (consts::E.powf(-factor * x))
 }
@@ -98,22 +98,32 @@ pub fn write_ppm(imgs: &Vec<Img>, fname: String) {
         ppm,
         "{}\n",
         max(imgs[0].maximum, max(imgs[1].maximum, imgs[2].maximum))
-    ).unwrap();
+    )
+    .unwrap();
     for pidx in 0..imgs[0].pixels.len() {
         write!(
             ppm,
             "{} {} {}\n",
-            imgs[0].pixels[pidx],
-            imgs[1].pixels[pidx],
-            imgs[2].pixels[pidx]
-        ).unwrap();
+            imgs[0].pixels[pidx], imgs[1].pixels[pidx], imgs[2].pixels[pidx]
+        )
+        .unwrap();
     }
 }
 
-// write_ppm writes a PPM formated image from a vector of Img structs
+// write_scaled_ppm writes a PPM formated image from a vector of Img structs, but with each pixel
+// value scaled in brightness using the `fexp` function.
 pub fn write_scaled_ppm(imgs: &Vec<Img>, fname: String) {
     let mut ppm = std::io::BufWriter::new(File::create(fname.as_str()).unwrap());
-    let scale_fn = |val, mx| {((fexp(val as f64, 0.050) / fexp(mx as f64, 0.050)) * 255.0) as u8};
+    let scale_fn = |val, mx| {
+        let scaled_val = ((fexp(val as f64, 0.050) / fexp(mx as f64, 0.050)) * 255.0) as u8;
+        // If a pixel is below the minimum brightness threshold but does still have a brightness,
+        // then scale that pixel to the minimum brightness threshold.
+        if val > 0 && val < (mx / 255) {
+            return (mx / 255 + 1 as i64) as u8;
+        } else {
+            return scaled_val;
+        }
+    };
     let max_brightness = max(imgs[0].maximum, max(imgs[1].maximum, imgs[2].maximum));
 
     write!(ppm, "P3\n# Created by leland batey RustPPM\n").unwrap();
@@ -126,8 +136,32 @@ pub fn write_scaled_ppm(imgs: &Vec<Img>, fname: String) {
             scale_fn(imgs[0].pixels[pidx], max_brightness),
             scale_fn(imgs[1].pixels[pidx], max_brightness),
             scale_fn(imgs[2].pixels[pidx], max_brightness),
-        ).unwrap();
+        )
+        .unwrap();
     }
+}
+
+pub fn write_scaled_png<F>(imgs: &Vec<Img>, fname: String, scale_func: F)
+where
+    F: Fn(f64, f64) -> f64,
+{
+    let mut imgbuf = image::ImageBuffer::<image::Rgb<u8>, Vec<u8>>::new(
+        imgs[0].width as u32,
+        imgs[0].height as u32,
+    );
+    for (x, y, pixel) in imgbuf.enumerate_pixels_mut() {
+        let r = imgs[0].scaled_pix_delegate(x as i64, y as i64, &scale_func);
+        let g = imgs[1].scaled_pix_delegate(x as i64, y as i64, &scale_func);
+        let b = imgs[2].scaled_pix_delegate(x as i64, y as i64, &scale_func);
+
+        *pixel = image::Rgb([r, g, b]);
+    }
+    let ref mut fout = File::create(&Path::new(fname.as_str())).unwrap();
+    let _ = image::ImageRgb8(imgbuf).save(fout, image::PNG);
+}
+
+pub fn write_png(imgs: &Vec<Img>, fname: String) {
+    write_scaled_png(imgs, fname, |val, _| val);
 }
 
 /// read_ppm reads a plain ppm file into a triplet of Img structs.
@@ -188,7 +222,6 @@ pub fn read_ppm(fname: String) -> Vec<Img> {
                     imgs.push(Img::new(width, height));
                     imgs.push(Img::new(width, height));
                     imgs.push(Img::new(width, height));
-
                 }
                 State::AwaitRed => {
                     imgs[0].set_px(x, y, token.parse().unwrap());
@@ -217,64 +250,45 @@ pub fn read_ppm(fname: String) -> Vec<Img> {
 // scaling functions to the values of each pixel in the PPM and saves a new PNG for each scaling
 // function.
 pub fn rescale_ppm(ppmname: String) {
-
     let imgs = read_ppm(ppmname.clone());
     println!("{}", imgs.len());
     println!("{}x{}", imgs[1].width, imgs[0].height);
     let mut scaling_funcs: Vec<(&str, Box<Fn(f64, f64) -> f64>)> = Vec::new();
     scaling_funcs.push((
         "fexp0_001",
-        Box::new(
-            |val, mx| (fexp(val as f64, 0.001) / fexp(mx as f64, 0.001)),
-        ),
+        Box::new(|val, mx| (fexp(val as f64, 0.001) / fexp(mx as f64, 0.001))),
     ));
     scaling_funcs.push((
         "fexp0_005",
-        Box::new(
-            |val, mx| (fexp(val as f64, 0.005) / fexp(mx as f64, 0.005)),
-        ),
+        Box::new(|val, mx| (fexp(val as f64, 0.005) / fexp(mx as f64, 0.005))),
     ));
     scaling_funcs.push((
         "fexp0_010",
-        Box::new(
-            |val, mx| (fexp(val as f64, 0.010) / fexp(mx as f64, 0.010)),
-        ),
+        Box::new(|val, mx| (fexp(val as f64, 0.010) / fexp(mx as f64, 0.010))),
     ));
     scaling_funcs.push((
         "fexp0_050",
-        Box::new(
-            |val, mx| (fexp(val as f64, 0.050) / fexp(mx as f64, 0.050)),
-        ),
+        Box::new(|val, mx| (fexp(val as f64, 0.050) / fexp(mx as f64, 0.050))),
     ));
     scaling_funcs.push((
         "fexp0_100",
-        Box::new(
-            |val, mx| (fexp(val as f64, 0.100) / fexp(mx as f64, 0.100)),
-        ),
+        Box::new(|val, mx| (fexp(val as f64, 0.100) / fexp(mx as f64, 0.100))),
     ));
     scaling_funcs.push((
         "log1_0",
-        Box::new(
-            |val, mx| log(val as f64, 1.0) / log(mx as f64, 1.0),
-        ),
+        Box::new(|val, mx| log(val as f64, 1.0) / log(mx as f64, 1.0)),
     ));
     scaling_funcs.push((
         "log0_5",
-        Box::new(
-            |val, mx| log(val as f64, 0.5) / log(mx as f64, 0.5),
-        ),
+        Box::new(|val, mx| log(val as f64, 0.5) / log(mx as f64, 0.5)),
     ));
     scaling_funcs.push((
         "log0_1",
-        Box::new(
-            |val, mx| log(val as f64, 0.1) / log(mx as f64, 0.1),
-        ),
+        Box::new(|val, mx| log(val as f64, 0.1) / log(mx as f64, 0.1)),
     ));
     scaling_funcs.push((
         "log0_01",
-        Box::new(
-            |val, mx| log(val as f64, 0.01) / log(mx as f64, 0.01),
-        ),
+        Box::new(|val, mx| log(val as f64, 0.01) / log(mx as f64, 0.01)),
     ));
 
     for func in scaling_funcs {
