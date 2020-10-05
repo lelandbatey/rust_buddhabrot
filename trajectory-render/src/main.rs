@@ -150,7 +150,7 @@ fn main() -> io::Result<()> {
     let parts: Vec<&str> = output_fname.split(".").collect();
     let no_ext = &parts[0..parts.len() - 1].join(".");
     ppm::write_scaled_png(&imgs, "scaled_".to_owned() + no_ext + ".png", |val, mx| {
-        ppm::fexp(val as f64, 0.050) / ppm::fexp(mx as f64, 0.050)
+        ppm::fexp(val as f64, 0.100) / ppm::fexp(mx as f64, 0.100)
     });
     Ok(())
 }

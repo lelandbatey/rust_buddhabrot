@@ -163,8 +163,8 @@ pub fn render_buddhabort(c: Conf) -> Vec<ppm::Img> {
 
     let mut children = vec![];
 
-    let max_thread_traj = max(1, (max_trajectories / c.thread_count));
-    let to_recieve: usize = min(c.trajectory_count, (max_thread_traj * c.thread_count));
+    let max_thread_traj = max(1, max_trajectories / c.thread_count);
+    let to_recieve: usize = min(c.trajectory_count, max_thread_traj * c.thread_count);
     println!(
         "Spawning {} threads, each producing {} trajectories, for a total of {} \
               trajectories being produced",
@@ -278,7 +278,7 @@ pub fn render_buddhabort(c: Conf) -> Vec<ppm::Img> {
     for traj in 0..to_recieve {
         match rx.recv_timeout(timeout) {
             Ok(trajectory) => {
-                if (traj % max((max_trajectories / 100), 1)) == 0 {
+                if (traj % max(max_trajectories / 100, 1)) == 0 {
                     print!(
                         "{}%\r",
                         ((traj as f64 / max_trajectories as f64) * 100.0) as u32
