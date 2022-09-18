@@ -83,7 +83,7 @@ impl Img {
     }
     pub fn scaled_pix_val(&self, x: i64, y: i64) -> u8 {
         self.scaled_pix_delegate(x, y, |val, mx| {
-            (fexp(val as f64, 0.001) / fexp(mx as f64, 0.001))
+            fexp(val as f64, 0.001) / fexp(mx as f64, 0.001)
         })
     }
 }
@@ -253,7 +253,7 @@ pub fn rescale_ppm(ppmname: String) {
     let imgs = read_ppm(ppmname.clone());
     println!("{}", imgs.len());
     println!("{}x{}", imgs[1].width, imgs[0].height);
-    let mut scaling_funcs: Vec<(&str, Box<Fn(f64, f64) -> f64>)> = Vec::new();
+    let mut scaling_funcs: Vec<(&str, Box<dyn Fn(f64, f64) -> f64>)> = Vec::new();
     scaling_funcs.push((
         "fexp0_001",
         Box::new(|val, mx| (fexp(val as f64, 0.001) / fexp(mx as f64, 0.001))),
@@ -289,6 +289,15 @@ pub fn rescale_ppm(ppmname: String) {
     scaling_funcs.push((
         "log0_01",
         Box::new(|val, mx| log(val as f64, 0.01) / log(mx as f64, 0.01)),
+    ));
+    scaling_funcs.push((
+        "ceil",
+        Box::new(|val, _| {
+            if val > 0.0 {
+                return 1.0;
+            }
+            return 0.0;
+        }),
     ));
 
     for func in scaling_funcs {

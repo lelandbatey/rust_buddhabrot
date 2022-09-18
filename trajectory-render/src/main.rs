@@ -12,19 +12,25 @@ use std::io;
 use std::thread;
 use std::time::Duration;
 
-use argparse::{ArgumentParser, Store};
+use argparse::{ArgumentParser, Store, StoreTrue};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 
 use buddhabrot::buddha::{Complex, Trajectory, Waypoint};
 use buddhabrot::ppm;
 
 fn main() -> io::Result<()> {
+    let mut scale_ppm_many = false;
     let mut thread_count = 3;
     let mut height: i64 = 1024;
     let mut width: i64 = 1024;
     let mut output_fname: String = "image.ppm".to_string();
     {
         let mut argparse = ArgumentParser::new();
+        argparse.refer(&mut scale_ppm_many).add_option(
+            &["--scale-ppm-many"],
+            StoreTrue,
+            "Whether to output many different scaled values of the PPM as PNG (default is off)",
+        );
         argparse.refer(&mut height).add_option(
             &["--height"],
             Store,
@@ -145,7 +151,12 @@ fn main() -> io::Result<()> {
         }
     }
     println!("Waypoints added: {}", wp_added);
-    //ppm::write_ppm(&imgs, output_fname.clone());
+    ppm::write_ppm(&imgs, output_fname.clone());
+
+    if scale_ppm_many {
+        println!("--scale-ppm-many provided, writing image to disk as PNG but scaled using many different algorithms");
+        ppm::rescale_ppm(output_fname.clone());
+    }
 
     let parts: Vec<&str> = output_fname.split(".").collect();
     let no_ext = &parts[0..parts.len() - 1].join(".");
