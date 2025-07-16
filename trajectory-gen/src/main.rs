@@ -72,8 +72,9 @@ fn coordinate_search(
     // less than the count specified on the CLI
     let per_thread_traj_count: usize = trajectory_count / thread_count;
     let total_trajectory_count: usize = per_thread_traj_count * thread_count;
-    let thread_trajectories: Vec<usize> =
-        (0..thread_count).map(|_| per_thread_traj_count).collect();
+    // Just kidding; we want all threads to be working, so tell each to find all the trajs; all
+    // threads will work all the time in this case and once we reach the max, then we're done
+    let thread_trajectories: Vec<usize> = (0..thread_count).map(|_| trajectory_count).collect();
 
     // Start the threads that do the searching
     let (sender, reciever) = channel();

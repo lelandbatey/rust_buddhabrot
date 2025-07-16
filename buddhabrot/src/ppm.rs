@@ -7,7 +7,6 @@ use std::f64::consts;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::ops::Deref;
-use std::path::Path;
 
 use self::regex::Regex;
 
@@ -156,8 +155,7 @@ where
 
         *pixel = image::Rgb([r, g, b]);
     }
-    let ref mut fout = File::create(&Path::new(fname.as_str())).unwrap();
-    let _ = image::ImageRgb8(imgbuf).save(fout, image::PNG);
+    let _ = image::DynamicImage::ImageRgb8(imgbuf).save(fname);
 }
 
 pub fn write_png(imgs: &Vec<Img>, fname: String) {
@@ -249,8 +247,7 @@ pub fn read_ppm(fname: String) -> Vec<Img> {
 // rescale_ppm accepts the path of a PPM file, reads that ppm file, applies several different
 // scaling functions to the values of each pixel in the PPM and saves a new PNG for each scaling
 // function.
-pub fn rescale_ppm(ppmname: String) {
-    let imgs = read_ppm(ppmname.clone());
+pub fn rescale_ppm(imgs: &Vec<Img>, ppmname: String) {
     println!("{}", imgs.len());
     println!("{}x{}", imgs[1].width, imgs[0].height);
     let mut scaling_funcs: Vec<(&str, Box<dyn Fn(f64, f64) -> f64>)> = Vec::new();
@@ -313,7 +310,6 @@ pub fn rescale_ppm(ppmname: String) {
             *pixel = image::Rgb([r, g, b]);
         }
         let pngname = ppmname.clone() + func.0 + ".png";
-        let ref mut fout = File::create(&Path::new(pngname.as_str())).unwrap();
-        let _ = image::ImageRgb8(imgbuf).save(fout, image::PNG);
+        let _ = image::DynamicImage::ImageRgb8(imgbuf).save(pngname);
     }
 }

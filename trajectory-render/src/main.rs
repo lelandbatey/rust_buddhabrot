@@ -129,8 +129,11 @@ fn main() -> io::Result<()> {
             // distribution of discovered orbits will be much more uniform, so make the
             // color distribution uniform. Otherwise, have it be inverse log base 10 to
             // compensate for the large number of small orbits.
-            let red_factor = if min_iterations > 100 { 0.40 } else { 0.10 };
-            let green_factor = if min_iterations > 100 { 0.10 } else { 0.01 };
+            //
+            // values have been tweaked from above to give more blue and green with longer
+            // trajectories
+            let red_factor = if min_iterations > 100 { 0.70 } else { 0.10 };
+            let green_factor = if min_iterations > 100 { 0.20 } else { 0.01 };
 
             let red_min = ((iter_span * red_factor) + min_iters) as i64;
             let green_min = ((iter_span * green_factor) + min_iters) as i64;
@@ -155,7 +158,7 @@ fn main() -> io::Result<()> {
 
     if scale_ppm_many {
         println!("--scale-ppm-many provided, writing image to disk as PNG but scaled using many different algorithms");
-        ppm::rescale_ppm(output_fname.clone());
+        ppm::rescale_ppm(&imgs, output_fname.clone());
     }
 
     let parts: Vec<&str> = output_fname.split(".").collect();
@@ -244,9 +247,21 @@ fn calculate_waypoints(receive_traj: Receiver<Trajectory>, send_waypoints: Sende
 }
 
 fn calc_pixel_pos(x: f64, y: f64, height: i64, width: i64) -> (i64, i64) {
-    //let (startx, stopx): (f64, f64) = (-2.5, 1.0);
-    let (startx, stopx): (f64, f64) = (-2.25, 0.75);
-    let (starty, stopy): (f64, f64) = (-1.5, 1.5);
+    // original
+    //let (startx, stopx): (f64, f64) = (-2.25, 0.75);
+    //let (starty, stopy): (f64, f64) = (-1.5, 1.5);
+
+    // cuts off the bottom
+    //let (startx, stopx): (f64, f64) = (-1.75, 0.25);
+    //let (starty, stopy): (f64, f64) = (-1.0, 1.0);
+
+    // Shrunk by 1/4 from the left, 1/8 top & 1/8 bottom
+    // 1/4 = 0.75
+    // 1/8 = 0.375
+    // This one centers the frame SO much better!
+    let (startx, stopx): (f64, f64) = (-1.5, 0.75);
+    let (starty, stopy): (f64, f64) = (-1.125, 1.125);
+
     let xspan = stopx - startx;
     let yspan = stopy - starty;
 
